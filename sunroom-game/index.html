@@ -1,0 +1,233 @@
+<!DOCTYPE html><html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+  <title>Bomb Tapper — Faces + Music (Mobile)</title>
+  <style>
+    :root{
+      --bg:#0b1120; --panel:#0f172a; --muted:#9ca3af; --text:#e5e7eb; --accent:#22d3ee; --danger:#ef4444; --good:#22c55e;
+    }
+    *{box-sizing:border-box; -webkit-tap-highlight-color: transparent;}
+    html,body{height:100%}
+    body{margin:0; background: url("assets/bg.jpg") center center / cover no-repeat fixed; color:var(--text); font-family: ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+    .game{position:fixed; inset:0; overflow:hidden; touch-action:none; user-select:none}
+    .hud{position:fixed; left:0; right:0; top:0; display:flex; gap:8px; justify-content:space-between; align-items:center; padding:10px 12px; background:linear-gradient(180deg, rgba(0,0,0,.35), rgba(0,0,0,0)); pointer-events:none}
+    .pill{background:rgba(15,23,42,.75); border:1px solid rgba(255,255,255,.08); border-radius:999px; padding:6px 10px; font-size:.95rem; display:inline-flex; align-items:center; gap:6px}
+    .btn{position:fixed; right:12px; bottom:12px; background:var(--accent); color:#00222a; border:0; border-radius:12px; padding:12px 14px; font-weight:700}
+    .overlay{position:fixed; inset:0; display:grid; place-items:center; background:rgba(2,6,23,.86)}
+    .card{background:rgba(15,23,42,.9); border:1px solid rgba(255,255,255,.08); border-radius:16px; padding:18px; width:min(92vw,520px); text-align:center}
+    h1{margin:0 0 8px}
+    .hint{color:var(--muted); font-size:.95rem}/* Targets: face images - no circular mask */
+.target{position:absolute; width:96px; height:96px; /* no border-radius */ object-fit:contain; object-position:center; transform-origin:center center; will-change: transform, opacity;}
+.target.flash{animation:flash .15s linear 2}
+@keyframes flash { from{filter:brightness(1)} to{filter:brightness(1.5)} }
+
+.pop{position:absolute; width:96px; height:96px; pointer-events:none; background: radial-gradient(circle, rgba(255,255,255,.9), rgba(255,255,255,0) 60%); opacity:.9; transform:scale(0.6); animation:pop .25s ease-out forwards}
+@keyframes pop { to{opacity:0; transform:scale(1.4)} }
+
+.hearts { display:flex; align-items:center; gap:4px; }
+.heart { font-size:1.6rem; line-height:1; filter: drop-shadow(0 1px 2px rgba(0,0,0,.35)); }
+
+  </style>
+</head>
+<body>
+  <div class="game" id="game"></div>  <div class="hud">
+    <div class="pill">Score: <span id="score">0</span></div>
+    <div class="pill"><span id="lives" class="hearts"></span></div>
+    <div class="pill">Level: <span id="level">1</span></div>
+  </div><button class="btn" id="restartBtn" hidden>Restart</button>
+
+  <div class="overlay" id="overlay">
+    <div class="card">
+      <h1>💥 Face Taps</h1>
+      <p class="hint">Tap the faces before they shrink away. Each miss costs a life. You have <b>3 lives</b>. Spawns and shrink speeds ramp up so a game usually ends in a few minutes.</p>
+      <button class="btn" id="startBtn">Start</button>
+    </div>
+  </div><script>
+(() => {
+  const gameEl = document.getElementById('game');
+  const overlay = document.getElementById('overlay');
+  const startBtn = document.getElementById('startBtn');
+  const restartBtn = document.getElementById('restartBtn');
+  const scoreEl = document.getElementById('score');
+  const livesEl = document.getElementById('lives');
+  const levelEl = document.getElementById('level');
+
+  // Use your provided PNGs
+  const FACE_IMAGES = [
+    'assets/faces/josh.png',
+    'assets/faces/gin.png',
+    'assets/faces/seb.png',
+    'assets/faces/cass.png',
+    'assets/faces/dan.png',
+    'assets/faces/jac.png'
+  ];
+
+  FACE_IMAGES.forEach(src => {
+  const img = new Image();
+  img.src = src;
+  });
+  
+  const SONG_URL = 'assets/song.mp3';
+  const audio = new Audio(SONG_URL);
+  audio.preload = 'auto';
+  audio.loop = true;  // continuous music
+  audio.volume = 1.0;
+
+  const STATE = {
+    running:false,
+    score:0,
+    lives:3,
+    level:1,
+    bombs:new Map(),
+    lastId:0,
+    nextSpawnAt:0,
+    spawnInterval:1000,
+    shrinkRate:0.5,
+    startedAt:0,
+  };
+
+  const DIM = () => ({ w: gameEl.clientWidth, h: gameEl.clientHeight });
+  function rand(a,b){ return a + Math.random()*(b-a); }
+  const pick = arr => arr[Math.floor(Math.random()*arr.length)]
+
+  function renderLives(){
+    livesEl.innerHTML = '';
+    for (let i=0; i<STATE.lives; i++) {
+      const el = document.createElement('span');
+      el.className = 'heart';
+      el.textContent = '❤️';
+      livesEl.appendChild(el);
+    }
+  }
+
+  function spawnBomb(){
+    if (STATE.bombs.size > 0) return;
+
+    const {w,h} = DIM();
+    // 2x starting size range
+    const size = rand(156, 236);
+    const x = Math.round(rand(12, Math.max(12, w - size - 12)));
+    const y = Math.round(rand(70, Math.max(70, h - size - 12)));
+    const id = ++STATE.lastId;
+
+    const el = document.createElement('img');
+    el.className = 'target';
+    el.src = pick(FACE_IMAGES);
+    el.alt = 'target';
+    el.width = el.height = size;
+    el.style.width = el.style.height = size + 'px';
+    el.style.left = x + 'px';
+    el.style.top  = y + 'px';
+
+    const created = performance.now();
+    const lifespan = rand(1400, 2300); // same timing as before
+
+    const bomb = { id, el, x, y, size, created, lifespan, dead:false };
+    STATE.bombs.set(id, bomb);
+
+    const onTap = (e)=>{
+      if (bomb.dead || !STATE.running) return;
+      bomb.dead = true;
+      hitBomb(bomb);
+      e.stopPropagation();
+    };
+    el.addEventListener('touchstart', onTap, { passive:false });
+    el.addEventListener('mousedown', onTap);
+
+    gameEl.appendChild(el);
+  }
+
+  function hitBomb(bomb){
+    if (bomb.el && bomb.el.parentNode){
+      const pop = document.createElement('div');
+      pop.className = 'pop';
+      pop.style.left = bomb.x + 'px';
+      pop.style.top  = bomb.y + 'px';
+      gameEl.appendChild(pop);
+      setTimeout(()=> pop.remove(), 260);
+      bomb.el.remove();
+    }
+    STATE.bombs.delete(bomb.id);
+    STATE.score += 1; scoreEl.textContent = STATE.score;
+    if (STATE.score % 5 === 0) levelUp();
+  }
+
+  function missBomb(bomb){
+    if (bomb.dead) return;
+    bomb.dead = true;
+    if (bomb.el) bomb.el.remove();
+    STATE.bombs.delete(bomb.id);
+    STATE.lives -= 1; renderLives();
+    flashHUD();
+    if (STATE.lives <= 0) endGame();
+  }
+
+  function flashHUD(){
+    const hud = document.querySelector('.hud');
+    hud.style.filter = 'brightness(1.5)';
+    setTimeout(()=>{ hud.style.filter = 'none'; }, 120);
+  }
+
+  function levelUp(){
+    STATE.level += 1; levelEl.textContent = STATE.level;
+    STATE.spawnInterval = Math.max(300, STATE.spawnInterval * 0.9);
+    STATE.shrinkRate = Math.min(1.25, STATE.shrinkRate * 1.07);
+  }
+
+  function reset(){
+    STATE.running=false; STATE.score=0; STATE.lives=3; STATE.level=1;
+    STATE.bombs.forEach(b=> b.el && b.el.remove());
+    STATE.bombs.clear();
+    STATE.lastId=0; STATE.spawnInterval=1000; STATE.shrinkRate=0.5; STATE.startedAt=0; STATE.nextSpawnAt=0;
+    scoreEl.textContent='0'; levelEl.textContent='1';
+    renderLives();
+  }
+
+  async function start(){
+    reset();
+    overlay.style.display='none';
+    restartBtn.hidden = true;
+    STATE.running=true; STATE.startedAt=performance.now();
+    STATE.nextSpawnAt = performance.now() + 400;
+    try { await audio.play(); } catch(e) {}
+    requestAnimationFrame(loop);
+  }
+
+  function endGame(){
+    STATE.running=false;
+    restartBtn.hidden = false;
+    overlay.style.display='grid';
+    overlay.querySelector('h1').textContent = 'Game Over';
+    overlay.querySelector('.hint').innerHTML = `Score: <b>${STATE.score}</b> — Level <b>${STATE.level}</b><br/>Tap Start to play again.`;
+  }
+
+  function loop(now){
+    if (!STATE.running) return;
+
+    if (STATE.bombs.size === 0 && now >= STATE.nextSpawnAt){
+      spawnBomb();
+      const chaos = Math.random()*100;
+      STATE.nextSpawnAt = now + Math.max(240, STATE.spawnInterval - chaos);
+    }
+
+    STATE.bombs.forEach(b => {
+      const diffMult = 1 + (STATE.level-1)*0.09;
+      const lifespan = b.lifespan / diffMult / (1 + STATE.shrinkRate*0.35);
+      const t = 1 - ((now - b.created) / lifespan);
+      const s = Math.max(0, t);
+      b.el.style.transform = `scale(${s})`;
+      b.el.style.opacity = (0.6 + 0.4*s).toFixed(3);
+      if (s <= 0) missBomb(b);
+    });
+
+    if (now - STATE.startedAt > 180000) { endGame(); return; }
+
+    requestAnimationFrame(loop);
+  }
+
+  startBtn.addEventListener('click', start);
+  restartBtn.addEventListener('click', start);
+})();
+</script></body>
+</html>
