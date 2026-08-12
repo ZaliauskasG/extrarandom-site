@@ -1,0 +1,1035 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Economic Machine — A Playable Map of the US Economy</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;1,9..144,500&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0D141D; --panel:#141E29; --panel-2:#1A2531; --panel-3:#20303D;
+    --line:#293845; --line-2:#354654;
+    --paper:#EDE6D6; --text:#E6E1D6; --text-dim:#8A9BAA;
+    --gold:#C9A227; --gold-bright:#E7C455;
+    --up:#4FB86A; --up-bright:#74D68F;
+    --down:#CB574A; --down-bright:#E0776A;
+    /* legacy aliases kept so existing rules pick up the new semantics */
+    --teal:#4FB86A; --teal-bright:#74D68F;
+    --rust:#CB574A; --rust-bright:#E0776A;
+    --font-display:'Fraunces', serif; --font-body:'Inter', sans-serif; --font-mono:'IBM Plex Mono', monospace;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:var(--font-body);}
+  ::selection{background:var(--gold);color:#0F1620;}
+  @media (prefers-reduced-motion: reduce){ *{transition:none!important;animation:none!important;} }
+
+  .wrap{max-width:1480px;margin:0 auto;padding:22px 20px 60px;}
+  header.top{display:flex;justify-content:space-between;align-items:flex-end;gap:20px;flex-wrap:wrap;margin-bottom:18px;border-bottom:1px solid var(--line);padding-bottom:16px;}
+  .title-block{display:flex;flex-direction:column;gap:4px;}
+  .eyebrow{font-family:var(--font-mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--gold);}
+  h1{font-family:var(--font-display);font-weight:600;font-size:clamp(24px,3vw,36px);margin:2px 0 2px;color:var(--paper);}
+  .sub{color:var(--text-dim);font-size:13.5px;max-width:640px;line-height:1.5;}
+
+  /* Clock / transport */
+  .transport{display:flex;align-items:center;gap:14px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 14px;}
+  .clock{display:flex;flex-direction:column;gap:3px;min-width:118px;}
+  .clock .date{font-family:var(--font-display);font-weight:600;font-size:19px;color:var(--paper);line-height:1;}
+  .clock .daybar{width:118px;height:4px;background:var(--line);border-radius:2px;overflow:hidden;}
+  .clock .dayfill{height:100%;width:0;background:var(--gold);}
+  .clock .meta{font-family:var(--font-mono);font-size:10px;color:var(--text-dim);letter-spacing:.04em;}
+  .tbtns{display:flex;gap:7px;align-items:center;}
+  .play-btn{width:44px;height:44px;border-radius:50%;background:var(--gold);color:#1a1305;border:none;cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;transition:background .15s;}
+  .play-btn:hover{background:var(--gold-bright);}
+  .play-btn.playing{background:var(--panel-2);color:var(--gold-bright);border:1px solid var(--line);}
+  .speed-group{display:flex;border:1px solid var(--line);border-radius:6px;overflow:hidden;}
+  .speed-group button{border:none;border-radius:0;background:var(--panel-2);padding:8px 9px;font-size:11px;font-family:var(--font-mono);}
+  .speed-group button.active{background:var(--gold);color:#1a1305;}
+  .icon-btn{background:var(--panel-2);border:1px solid var(--line);border-radius:6px;padding:9px 11px;cursor:pointer;color:var(--text);font-size:11.5px;font-family:var(--font-body);font-weight:600;}
+  .icon-btn:hover{border-color:var(--gold);color:var(--gold-bright);}
+
+  .layout{display:grid;grid-template-columns:272px 1fr 300px;gap:18px;align-items:start;}
+  @media (max-width:1160px){ .layout{grid-template-columns:1fr;} }
+
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:15px;}
+  .panel-h{font-family:var(--font-display);font-weight:600;font-size:14.5px;margin:0 0 4px;color:var(--paper);display:flex;align-items:center;gap:8px;}
+  .panel-h .pd{width:7px;height:7px;border-radius:50%;background:var(--gold);}
+  .panel-note{font-size:11px;color:var(--text-dim);margin:0 0 14px;line-height:1.4;}
+
+  .lever-group{margin-bottom:16px;}
+  .lever-group:last-child{margin-bottom:0;}
+  .lg-title{font-family:var(--font-mono);font-size:10px;text-transform:uppercase;letter-spacing:.11em;color:var(--gold);margin-bottom:9px;padding-bottom:5px;border-bottom:1px solid var(--line);}
+  .lever{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:11px;}
+  .lever:last-child{margin-bottom:0;}
+  .lever-info{display:flex;flex-direction:column;gap:1px;min-width:0;}
+  .lever-name{font-size:12.5px;color:var(--text);font-weight:500;}
+  .lever-stance{font-family:var(--font-mono);font-size:10.5px;color:var(--text-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .stepper{display:flex;align-items:center;gap:0;flex-shrink:0;}
+  .step-btn{width:26px;height:28px;background:var(--panel-2);border:1px solid var(--line);color:var(--text);cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center;transition:background .12s,color .12s;}
+  .step-btn:first-child{border-radius:6px 0 0 6px;}
+  .step-btn:last-child{border-radius:0 6px 6px 0;}
+  .step-btn.up:hover{background:var(--teal);color:#08201d;}
+  .step-btn.down:hover{background:var(--rust);color:#2a0d0a;}
+  .step-btn:disabled{opacity:.3;cursor:not-allowed;}
+  .step-val{font-family:var(--font-mono);font-size:12px;font-weight:600;color:var(--gold-bright);min-width:40px;text-align:center;border-top:1px solid var(--line);border-bottom:1px solid var(--line);height:28px;display:flex;align-items:center;justify-content:center;background:var(--bg);}
+
+  .events-row{display:flex;flex-wrap:wrap;gap:7px;}
+  .event-btn{flex:1 1 auto;font-size:11px;font-weight:600;background:var(--panel-2);border:1px solid var(--line);border-radius:6px;padding:8px 9px;cursor:pointer;color:var(--text);transition:border-color .12s,color .12s;}
+  .event-btn:hover{border-color:var(--rust);color:var(--rust-bright);}
+  .scenario-list{display:flex;flex-direction:column;gap:7px;}
+  .scenario-btn{text-align:left;background:var(--panel-2);border:1px solid var(--line);border-radius:6px;padding:9px 10px;cursor:pointer;color:var(--text);font-weight:600;font-size:12px;transition:border-color .12s;}
+  .scenario-btn:hover{border-color:var(--gold);}
+  .scenario-btn small{display:block;font-weight:400;color:var(--text-dim);font-size:10px;margin-top:2px;line-height:1.35;}
+
+  /* Stage / ring */
+  .stage{padding:8px 8px 4px;}
+  svg#ring{width:100%;height:auto;display:block;}
+  .node-circle{fill:var(--panel-2);stroke:var(--line);stroke-width:1.5;transition:stroke .2s, fill .2s;}
+  .node-group{cursor:pointer;}
+  .node-group:hover .node-circle{stroke:var(--gold);fill:#22303f;}
+  .node-group.selected .node-circle{stroke:var(--gold-bright);stroke-width:2.5;fill:#26333f;}
+  .node-label{font-family:var(--font-body);font-weight:600;fill:var(--text);font-size:12px;pointer-events:none;}
+  .node-metric{font-family:var(--font-mono);font-size:10px;fill:var(--gold-bright);pointer-events:none;}
+  .edge{fill:none;stroke:var(--line);stroke-width:1.4;}
+  .edge.pos{stroke:var(--teal);stroke-width:2.6;}
+  .edge.neg{stroke:var(--rust);stroke-width:2.6;}
+  .edge.neu{stroke:var(--gold);stroke-width:2.2;}
+  .pulse-dot{opacity:0;}
+  .hub-ring{fill:none;stroke:var(--line);stroke-width:1;}
+  .hub-label{font-family:var(--font-mono);font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;fill:var(--text-dim);}
+  .hub-val{font-family:var(--font-mono);font-weight:600;font-size:19px;fill:var(--paper);}
+  .hub-arrow{font-family:var(--font-mono);font-size:11px;font-weight:600;fill:var(--text-dim);letter-spacing:-1px;}
+
+  .stage-detail{background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:14px;margin:6px 6px 6px;}
+  .detail-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;}
+  .detail-title{font-family:var(--font-display);font-size:16px;color:var(--gold-bright);}
+  .detail-back{font-size:11px;color:var(--text-dim);background:none;border:none;cursor:pointer;font-family:var(--font-body);}
+  .detail-back:hover{color:var(--gold-bright);}
+  .detail-role{font-size:12px;color:var(--text-dim);line-height:1.5;margin-bottom:12px;}
+  .detail-metrics{display:grid;grid-template-columns:1fr 1fr;gap:9px;}
+  .dm{background:var(--bg);border:1px solid var(--line);border-radius:7px;padding:9px 10px;}
+  .dm .dm-l{font-family:var(--font-mono);font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-dim);display:flex;justify-content:space-between;}
+  .dm .dm-v{font-family:var(--font-mono);font-weight:600;font-size:16px;color:var(--paper);margin-top:3px;}
+  .dm .dm-h{font-size:10.5px;color:var(--text-dim);margin-top:3px;line-height:1.35;}
+  .trend-up{color:var(--teal-bright);} .trend-down{color:var(--rust-bright);} .trend-flat{color:var(--text-dim);}
+
+  .headline-chips{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:2px;}
+  @media (max-width:520px){ .headline-chips{grid-template-columns:repeat(2,1fr);} }
+  .chip{background:var(--bg);border:1px solid var(--line);border-radius:7px;padding:8px 9px;}
+  .chip .cl{font-family:var(--font-mono);font-size:8.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-dim);}
+  .chip .cv{font-family:var(--font-mono);font-weight:600;font-size:15px;color:var(--paper);margin-top:2px;display:flex;align-items:baseline;gap:3px;}
+  .chip .cv .u{font-size:10px;color:var(--text-dim);font-weight:400;}
+  .summary-line{font-size:12.5px;color:var(--text);line-height:1.55;margin:2px 0 12px;padding:10px 12px;background:var(--bg);border-left:2px solid var(--gold);border-radius:0 6px 6px 0;}
+
+  /* Stakeholders */
+  .stk{margin-bottom:11px;}
+  .stk:last-child{margin-bottom:0;}
+  .stk-head{display:flex;justify-content:space-between;align-items:baseline;cursor:pointer;gap:6px;}
+  .stk-name{font-size:12.5px;font-weight:600;color:var(--text);display:flex;align-items:center;gap:6px;}
+  .stk-name .tri{font-size:8px;color:var(--text-dim);transition:transform .15s;display:inline-block;}
+  .stk.open .stk-name .tri{transform:rotate(90deg);}
+  .stk-right{display:flex;align-items:center;gap:7px;}
+  .stk-mom{font-family:var(--font-mono);font-size:11px;letter-spacing:-1px;min-width:26px;text-align:right;}
+  .stk-mom.up{color:var(--up-bright);} .stk-mom.down{color:var(--down-bright);} .stk-mom.flat{color:var(--text-dim);}
+  .stk-score{font-family:var(--font-mono);font-size:11.5px;font-weight:600;min-width:22px;text-align:right;}
+  .stk-bartrack{height:9px;background:var(--bg);border-radius:5px;overflow:hidden;margin-top:5px;border:1px solid var(--line);}
+  .stk-barfill{height:100%;width:50%;border-radius:5px;transition:width .5s ease, background .5s ease;}
+  .stk-why{max-height:0;overflow:hidden;transition:max-height .2s ease;}
+  .stk.open .stk-why{max-height:80px;}
+  .stk-why-inner{font-size:10.5px;color:var(--text-dim);line-height:1.5;padding:6px 0 2px;}
+  .stk-why-inner .g{color:var(--teal-bright);} .stk-why-inner .b{color:var(--rust-bright);}
+  .stk-divider{height:1px;background:var(--line);margin:12px 0;}
+  .stk-legend{display:flex;gap:12px;font-size:10px;color:var(--text-dim);margin-top:10px;}
+  .stk-legend span{display:flex;align-items:center;gap:4px;}
+  .stk-legend i{width:9px;height:9px;border-radius:2px;display:inline-block;}
+
+  .log-title{font-family:var(--font-mono);font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--text-dim);margin:14px 0 7px;}
+  .log{max-height:170px;overflow-y:auto;}
+  .log-entry{font-size:11.5px;line-height:1.45;padding:6px 0;border-bottom:1px dashed var(--line);color:var(--text);}
+  .log-entry:last-child{border-bottom:none;}
+  .log-entry .qt{font-family:var(--font-mono);color:var(--gold);font-size:10px;margin-right:5px;}
+  .log-entry.cause{color:var(--text-dim);font-style:italic;}
+  .log-entry.persona{color:var(--paper);font-style:italic;padding:9px 10px;border-radius:6px;background:rgba(201,162,39,0.07);border-left:2px solid var(--gold);margin:6px 0;}
+  .log-entry.persona.persona-low{background:rgba(203,87,74,0.09);border-left-color:var(--down);}
+  .log-entry.persona.persona-high{background:rgba(79,184,106,0.09);border-left-color:var(--up);}
+  .log-entry.persona .who{display:block;font-style:normal;font-weight:600;font-size:9.5px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;color:var(--gold-bright);}
+  .log-entry.persona.persona-low .who{color:var(--down-bright);}
+  .log-entry.persona.persona-high .who{color:var(--up-bright);}
+  .log::-webkit-scrollbar{width:5px;} .log::-webkit-scrollbar-thumb{background:var(--line);border-radius:3px;}
+
+  footer.note{margin-top:20px;font-size:11px;color:var(--text-dim);line-height:1.6;border-top:1px solid var(--line);padding-top:12px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <div class="title-block">
+      <span class="eyebrow">A Playable Simulation</span>
+      <h1>The Economic Machine</h1>
+      <p class="sub">Run the clock and steer the US economy. Every choice helps someone and hurts someone else — watch who.</p>
+    </div>
+    <div class="transport">
+      <button class="play-btn" id="playBtn" title="Play / Pause">▶</button>
+      <div class="clock">
+        <span class="date" id="clockDate">Jan · Yr 1</span>
+        <div class="daybar"><div class="dayfill" id="dayFill"></div></div>
+        <span class="meta" id="clockMeta">Day 1 · paused</span>
+      </div>
+      <div class="speed-group" id="speedGroup">
+        <button data-speed="1" class="active">1×</button>
+        <button data-speed="5">5×</button>
+        <button data-speed="10">10×</button>
+      </div>
+      <button class="icon-btn" id="resetBtn">Reset</button>
+    </div>
+  </header>
+
+  <div class="layout">
+
+    <!-- LEFT: GOVERNMENT CONTROLS -->
+    <div class="panel">
+      <div class="panel-h"><span class="pd"></span>Policy Levers</div>
+      <p class="panel-note">Only what a government &amp; central bank actually control. Use the arrows.</p>
+      <div id="leverPanel"></div>
+
+      <div class="lever-group" style="margin-top:18px;">
+        <div class="lg-title">World Events · outside your control</div>
+        <div class="events-row" id="eventsRow"></div>
+      </div>
+
+      <div class="lever-group">
+        <div class="lg-title">Scenarios</div>
+        <div class="scenario-list" id="scenarioList"></div>
+      </div>
+    </div>
+
+    <!-- CENTER: STAGE -->
+    <div class="panel stage">
+      <svg id="ring" viewBox="0 0 900 720" xmlns="http://www.w3.org/2000/svg"></svg>
+      <div id="stageDetail"></div>
+    </div>
+
+    <!-- RIGHT: STAKEHOLDERS -->
+    <div class="panel">
+      <div class="panel-h"><span class="pd"></span>Who's Winning?</div>
+      <p class="panel-note">The same economy, felt from different seats. Tap a name to see why.</p>
+      <div id="stkPanel"></div>
+      <div class="stk-legend">
+        <span><i style="background:var(--up)"></i>content</span>
+        <span><i style="background:var(--gold)"></i>mixed</span>
+        <span><i style="background:var(--down)"></i>struggling</span>
+      </div>
+      <div class="log-title">Event Log</div>
+      <div class="log" id="log"></div>
+    </div>
+
+  </div>
+
+  <footer class="note">Educational model — relationships are simplified and directional, not calibrated forecasts. The point is to show that no lever moves alone, and that "good for the economy" always depends on <em>whose</em> economy.</footer>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  // ============ NODES & EDGES ============
+  const NODES = [
+    {id:'fed',    label:'Federal Reserve', metric:s=>fmt(gov.fedRate,2)+'%', role:'Sets the short-term interest rate and controls the money supply by creating money to buy bonds (QE) or draining it (QT).'},
+    {id:'gov',    label:'US Treasury',     metric:s=>fmt(D.deficit,1)+'% def', role:'Spends money and collects taxes. When it spends more than it taxes, it borrows by issuing bonds — building up national debt.'},
+    {id:'bonds',  label:'Bond Market',     metric:s=>fmt(s.bondYield,1)+'%', role:'Where US government debt trades, including the foreign governments and funds that hold much of it. Yields rise when buyers — domestic or foreign — demand more return, which makes all government borrowing costlier and can move the dollar.'},
+    {id:'stocks', label:'Stock Market',    metric:s=>Math.round(s.stock), role:'Prices reflect expected future profits, discounted by interest rates. Cheap money and growth lift stocks; high rates weigh them down.'},
+    {id:'house',  label:'Households/ Affordability', metric:s=>Math.round(D.affordability), role:'Consumers who earn, spend, save, and buy homes. Their confidence, real income, and ability to afford housing drive most of the economy\u2019s demand.'},
+    {id:'housing',label:'Housing Market',  metric:s=>Math.round(s.housing), role:'Home prices and construction — extremely sensitive to mortgage rates. Great for owners when prices rise, brutal for first-time buyers.'},
+    {id:'labor',  label:'Labor Market',    metric:s=>fmt(s.unemployment,1)+'%', role:'Where jobs and wages are set. A tight labor market lifts wages; slack raises unemployment and softens pay.'},
+    {id:'biz',    label:'Businesses',      metric:s=>fmt(s.gdp,1)+'%', role:'Firms that hire, invest, and set prices. They expand when demand is strong and credit is cheap; they cut when costs bite.'},
+    {id:'banks',  label:'Banks & Credit',  metric:s=>fmt(D.mortgageRate,1)+'%', role:'The transmission belt: they turn the Fed\u2019s rate into real-world mortgage, card, and business-loan rates.'}
+  ];
+  const EDGES = [
+    ['fed','banks'],['fed','bonds'],['gov','bonds'],['gov','biz'],['gov','house'],
+    ['stocks','biz'],['stocks','house'],['house','biz'],
+    ['house','housing'],['housing','banks'],['labor','house'],['labor','biz'],['banks','biz']
+  ];
+  const EDGE_INDEX = {};
+  EDGES.forEach((e,i)=>{ EDGE_INDEX[e[0]+'-'+e[1]]=i; EDGE_INDEX[e[1]+'-'+e[0]]=i; });
+
+  // ============ LEVERS ============
+  const LEVERS = [
+    {id:'fedRate', grp:'Federal Reserve', name:'Interest Rate', min:0, max:8, step:0.25, val:2.5,
+      disp:v=>fmt(v,2)+'%', stance:v=> v>=4?'Restrictive':v>=3?'Tight':v>=2?'Neutral':v>=1?'Easy':'Very easy',
+      edges:['fed-banks','fed-bonds']},
+    {id:'money', grp:'Federal Reserve', name:'Money Supply', min:-5, max:5, step:1, val:0,
+      disp:v=> v>0?('+'+v):(''+v), stance:v=> v>0?('Printing / QE'):v<0?('Draining / QT'):'Neutral',
+      edges:['fed-bonds','fed-banks']},
+    {id:'spending', grp:'Treasury & Fiscal', name:'Spending', min:-5, max:5, step:1, val:0,
+      disp:v=> v>0?('+'+v):(''+v), stance:v=> v>0?'Spending big':v<0?'Cutting / saving':'Balanced',
+      edges:['gov-biz','gov-house','gov-bonds']},
+    {id:'tax', grp:'Treasury & Fiscal', name:'Tax Rate', min:0, max:40, step:1, val:20,
+      disp:v=>v+'%', stance:v=> v>=28?'High taxes':v>=16?'Moderate':'Low taxes',
+      edges:['gov-house','gov-biz']},
+    {id:'housingPolicy', grp:'Sector Policy', name:'Housing', min:-5, max:5, step:1, val:0,
+      disp:v=> v>0?('+'+v):(''+v), stance:v=> v>0?'Incentivize building':v<0?'Tighten regulation':'Hands off',
+      edges:['house-housing','housing-banks']},
+    {id:'energyPolicy', grp:'Sector Policy', name:'Energy', min:-5, max:5, step:1, val:0,
+      disp:v=> v>0?('+'+v):(''+v), stance:v=> v>0?'Invest in supply':v<0?'Cut to save budget':'Hands off',
+      edges:['gov-biz','stocks-biz']}
+  ];
+  const gov = {};
+  LEVERS.forEach(l=> gov[l.id]=l.val);
+
+  // ============ STATE ============
+  function initState(){
+    return { inflation:2.0, unemployment:4.0, gdp:2.0, wage:3.0, confidence:60,
+             bondYield:3.5, foreignConf:70, dollar:100, housing:100, stock:100,
+             energyPrice:100, debt:100 };
+  }
+  let state, D, lastD, ev, stk, stkSmooth, stkVel, history, day, selected, playing, speed, timer, lastMonth;
+  let metricVel, metricPrev, stkBand, personaReady;
+
+  function fullReset(){
+    personaReady = false;
+    LEVERS.forEach(l=> gov[l.id]=l.val);
+    state = initState();
+    ev = {energy:0, demand:0, conf:0, foreign:0, gdp:0, unemp:0, wage:0, stock:0, housing:0};
+    D = computeDerived(); lastD = {...D};
+    stk = {}; stkSmooth = {}; stkVel = {}; stkBand = {};
+    STAKEHOLDERS.forEach(s=>{ if(!s.calc) return; const v = clamp(s.calc(),0,100); stk[s.id]=v; stkSmooth[s.id]=v; stkVel[s.id]=0; stkBand[s.id]=bandOf(v,'mid'); });
+    metricVel = {}; metricPrev = trackedValues();
+    for(const k in metricPrev){ metricVel[k]=0; }
+    history = {}; ['inflation','unemployment','gdp','housing','stock','bondYield','mortgageRate','deficit'].forEach(k=>history[k]=[]);
+    day=0; selected=null; lastMonth=-1;
+    pushHistory();
+    renderLevers(); renderStakeholders(); renderStage(); updateClock();
+    document.getElementById('log').innerHTML='';
+    log('Economy reset to baseline. Press play to start the clock.', true);
+    personaReady = true;
+  }
+
+  // ============ DERIVED ============
+  function computeDerived(){
+    const s = state;
+    const mortgageRate = gov.fedRate + 1.8 + Math.max(0,(s.bondYield-3.5))*0.5;
+    const realWage = s.wage - s.inflation;
+    const realRate = gov.fedRate - s.inflation;
+    const taxGap = (gov.tax-20)/10;
+    const deficit = clamp(3 + gov.spending*0.9 - taxGap*2.0 + Math.max(0,gov.housingPolicy)*0.2
+                    + Math.max(0,gov.energyPolicy)*0.3 + (s.bondYield-3.5)*0.4 - (s.gdp-2)*0.3, -3, 14);
+    const affordability = 100 - (s.housing-100)*0.6 - (mortgageRate-4)*7 + (s.wage-3)*4;
+    return {mortgageRate, realWage, realRate, deficit, affordability, taxGap};
+  }
+
+  // ============ MOMENTUM TRACKING (goodness-signed) ============
+  // Which direction of each metric is objectively better for the country.
+  const GOOD = {
+    inflation:'target2', unemployment:'down', gdp:'up', wage:'up', bondYield:'down',
+    foreignConf:'up', stock:'up', confidence:'up', debt:'down', mortgageRate:'down',
+    affordability:'up', realWage:'up', deficit:'down', dollar:null, housing:null
+  };
+  // Monthly change that counts as a "strong" (3-arrow) move, per metric.
+  const SCALE = {
+    inflation:0.5, unemployment:0.4, gdp:0.5, wage:0.4, bondYield:0.4, foreignConf:6,
+    stock:6, confidence:5, debt:1.5, mortgageRate:0.4, affordability:6, realWage:0.4, deficit:1.0,
+    dollar:4, housing:3
+  };
+  function trackedValues(){
+    const s=state, d=D||computeDerived();
+    return {
+      inflation:s.inflation, unemployment:s.unemployment, gdp:s.gdp, wage:s.wage,
+      bondYield:s.bondYield, foreignConf:s.foreignConf, stock:s.stock, confidence:s.confidence,
+      debt:s.debt, dollar:s.dollar, housing:s.housing,
+      mortgageRate:d.mortgageRate, affordability:d.affordability, realWage:d.realWage, deficit:d.deficit
+    };
+  }
+  function updateMetricVel(){
+    const cur=trackedValues();
+    for(const k in cur){
+      const prev = (metricPrev[k]==null)?cur[k]:metricPrev[k];
+      const dlt = cur[k]-prev;
+      metricVel[k] = (metricVel[k]||0)*0.85 + dlt*0.15;
+      metricPrev[k]=cur[k];
+    }
+  }
+  // Returns {n:0..3, dir:'up'|'down'|'none'} where up=improving(green), down=worsening(red)
+  function arrowMeta(key){
+    const vel=metricVel[key]||0, scale=SCALE[key]||1;
+    const ratio=Math.abs(vel*30)/scale;
+    const n = ratio>0.9?3:ratio>0.45?2:ratio>0.15?1:0;
+    const gd=GOOD[key]; if(!gd) return {n:0,dir:'none'};
+    let g=0;
+    if(gd==='up') g=vel; else if(gd==='down') g=-vel;
+    else if(gd==='target2') g=(state.inflation>=2?-vel:vel);
+    if(n===0 || Math.abs(g)<1e-9) return {n:0,dir:'none'};
+    return {n, dir:g>0?'up':'down'};
+  }
+  function arrowText(key){
+    const m=arrowMeta(key);
+    if(m.dir==='none') return {t:'', c:'flat'};
+    return {t:(m.dir==='up'?'▲':'▼').repeat(m.n), c:m.dir==='up'?'up':'down'};
+  }
+
+  // ============ SIMULATION (one day) ============
+  function tick(){
+    const s = state, g = gov;
+    const fedGap = g.fedRate - 2.5;
+    const taxGap = (g.tax-20)/10;
+
+    // decay world-event impulses
+    for(const k in ev){ ev[k] *= (k==='energy'?0.985:0.965); if(Math.abs(ev[k])<0.02) ev[k]=0; }
+
+    // energy price target
+    const enTarget = 100 - g.energyPolicy*3 + ev.energy;
+    s.energyPrice += (enTarget - s.energyPrice)*0.03;
+    const enGap = (s.energyPrice-100)/10;
+    // asymmetry: energy price *increases* bite GDP harder than decreases help (OeNB 2004)
+    const enGapGdp = enGap>0 ? enGap : enGap*0.5;
+    // wealth effect: MPC ~4c financial, ~5c housing (RAND/Carroll) — feeds spending/GDP
+    const wealthEffect = 0.04*(s.stock-100)/10 + 0.05*(s.housing-100)/10;
+
+    // targets  (coefficients calibrated to empirical literature — see calibration ref)
+    const infT = 2 + 0.20*g.money - 0.45*fedGap + 0.22*g.spending - 0.12*taxGap
+                 + 0.40*enGap + 0.15*(s.wage-3) + 0.15*ev.demand;
+    const unT  = 4 + 0.35*fedGap - 0.22*g.money - 0.25*g.spending + 0.15*taxGap
+                 - 0.12*g.housingPolicy + 0.10*enGap - 0.016*(s.confidence-60) + ev.unemp - 0.15*ev.demand;
+    const gdpT = 2 - 0.45*fedGap + 0.25*g.money + 0.30*g.spending - 0.20*taxGap
+                 + 0.12*g.housingPolicy + 0.015*(s.confidence-60) - 0.25*enGapGdp + wealthEffect + ev.gdp + 0.30*ev.demand;
+    const wgT  = 3 - 0.30*(s.unemployment-4) + 0.15*(s.inflation-2) + ev.wage;
+    const cfT  = 60 - 3*(s.unemployment-4) - 2.5*(s.inflation-2) + 0.15*(s.stock-100) + ev.conf;
+    // foreign "buyers' strike": weak foreign confidence adds a convex jump to yields (Warnock/KC Fed)
+    const foreignStrike = 0.03*Math.max(0, 40 - s.foreignConf);
+    const byT  = 1.6 + 0.55*g.fedRate + 0.30*(s.inflation-2) + 0.18*g.spending
+                 - 0.020*(s.foreignConf-70) + foreignStrike - 0.20*g.money + 0.010*(s.debt-100);
+    const fcT  = 70 + 1.2*fedGap - 2*(s.inflation-2) - 0.8*g.spending - 0.03*(s.debt-100) + ev.foreign;
+    const dlT  = 100 + 2.2*fedGap - 1.8*g.money + 0.03*(s.foreignConf-70) - 0.4*(s.inflation-2);
+
+    s.inflation    += (infT - s.inflation)*0.020;
+    s.unemployment  = Math.max(1.5, s.unemployment + (unT - s.unemployment)*0.020);
+    s.gdp          += (gdpT - s.gdp)*0.030;
+    s.wage         += (wgT - s.wage)*0.020;
+    s.confidence    = clamp(s.confidence + (cfT - s.confidence)*0.035, 0, 100);
+    s.bondYield     = Math.max(0, s.bondYield + (byT - s.bondYield)*0.055);
+    s.foreignConf   = clamp(s.foreignConf + (fcT - s.foreignConf)*0.030, 0, 100);
+    s.dollar       += (dlT - s.dollar)*0.035;
+
+    // debt accumulates from deficit
+    s.debt += computeDerived().deficit/360;
+
+    // index growth (monthly %, applied per day)
+    const mort = g.fedRate + 1.8 + Math.max(0,(s.bondYield-3.5))*0.5;
+    const hGrowM = clamp(-0.3*(mort-4) + 0.15*(s.confidence-60)/10 + 0.12*(s.wage-3) - 0.20*g.housingPolicy + ev.housing, -7, 7);
+    const sGrowM = clamp(0.5*g.money - 0.6*fedGap + 0.5*(s.gdp-2) - 0.35*(s.bondYield-3.5) + 0.015*(s.confidence-60) + ev.stock, -9, 9);
+    s.housing = Math.max(20, s.housing*(1 + (hGrowM/100)/30));
+    s.stock   = Math.max(20, s.stock*(1 + (sGrowM/100)/30));
+
+    lastD = D;
+    D = computeDerived();
+    updateMetricVel();
+
+    // stakeholder happiness (smoothed)
+    STAKEHOLDERS.forEach(sh=>{
+      if(!sh.calc) return;
+      const raw = clamp(sh.calc(),0,100);
+      const prev = stkSmooth[sh.id];
+      stkSmooth[sh.id] += (raw - prev)*0.06;
+      const d = stkSmooth[sh.id] - prev;
+      stkVel[sh.id] = stkVel[sh.id]*0.85 + d*0.15;
+      stk[sh.id] = stkSmooth[sh.id];
+    });
+
+    day++;
+    if(day%3===0) pushHistory();
+
+    const month = Math.floor(day/30);
+    if(month!==lastMonth){ lastMonth=month; onMonthTurn(); }
+
+    updateClock();
+    renderStakeholders();
+    renderStageValues();
+  }
+
+  function pushHistory(){
+    const rec = {inflation:state.inflation, unemployment:state.unemployment, gdp:state.gdp,
+                 housing:state.housing, stock:state.stock, bondYield:state.bondYield,
+                 mortgageRate:D.mortgageRate, deficit:D.deficit};
+    for(const k in rec){ history[k].push(rec[k]); if(history[k].length>40) history[k].shift(); }
+  }
+
+  function onMonthTurn(){
+    pulseAllEdges();
+    // monthly plain-English readout
+    const s=state;
+    const bits=[];
+    bits.push(`inflation ${fmt(s.inflation,1)}%`);
+    bits.push(`unemployment ${fmt(s.unemployment,1)}%`);
+    bits.push(`growth ${fmt(s.gdp,1)}%`);
+    log(`A month passes — ${bits.join(', ')}.`, false);
+    renderStage();
+  }
+
+  // ============ STAKEHOLDERS ============
+  const STAKEHOLDERS = [
+    {id:'assets', name:'Asset Holders',
+     calc:()=>{const s=state; return 50 + 0.28*(s.stock-100) + 0.20*(s.housing-100) - 3.5*(gov.fedRate-2.5) - 2*(s.bondYield-3.5);},
+     drivers:()=>{const s=state; return [
+        ['Rising stocks', (s.stock-100)*0.28],
+        ['Rising home values', (s.housing-100)*0.20],
+        ['Low interest rates', -(gov.fedRate-2.5)*3.5],
+        ['Low bond yields', -(s.bondYield-3.5)*2]];}},
+    {id:'buyers', name:'Prospective Homebuyers',
+     calc:()=>{const s=state; return 60 - 0.45*(s.housing-100) - 6*(D.mortgageRate-4) + 3*(s.wage-3) - 2*(s.inflation-2);},
+     drivers:()=>{const s=state; return [
+        ['Affordable prices', -(s.housing-100)*0.45],
+        ['Low mortgage rates', -(D.mortgageRate-4)*6],
+        ['Rising wages', (s.wage-3)*3],
+        ['Low inflation', -(s.inflation-2)*2]];}},
+    {id:'workers', name:'Wage Workers',
+     calc:()=>{const s=state; return 55 - 6*(s.unemployment-4) + 5*(D.realWage-1);},
+     drivers:()=>{const s=state; return [
+        ['Plentiful jobs', -(s.unemployment-4)*6],
+        ['Real wage gains', (D.realWage-1)*5]];}},
+    {id:'savers', name:'Savers & Retirees',
+     calc:()=>{const s=state; return 50 + 4*(gov.fedRate-2.5) + 3*(s.bondYield-3.5) - 6*(s.inflation-2);},
+     drivers:()=>{const s=state; return [
+        ['High interest rates', (gov.fedRate-2.5)*4],
+        ['Healthy bond yields', (s.bondYield-3.5)*3],
+        ['Low inflation', -(s.inflation-2)*6]];}},
+    {id:'biz', name:'Businesses',
+     calc:()=>{const s=state; return 52 + 6*(s.gdp-2) - 3*(gov.fedRate-2.5) - 0.3*(s.energyPrice-100) + 0.25*(s.confidence-60);},
+     drivers:()=>{const s=state; return [
+        ['Strong demand', (s.gdp-2)*6],
+        ['Cheap credit', -(gov.fedRate-2.5)*3],
+        ['Low energy costs', -(s.energyPrice-100)*0.3],
+        ['Confident consumers', (s.confidence-60)*0.25]];}},
+    {id:'fiscal', name:'Government Finances',
+     calc:()=>{const s=state; return 65 - 4*(D.deficit-3) - 4*(s.bondYield-3.5) + 3*(s.gdp-2) - 0.15*(s.debt-100);},
+     drivers:()=>{const s=state; return [
+        ['Small deficit', -(D.deficit-3)*4],
+        ['Cheap borrowing', -(s.bondYield-3.5)*4],
+        ['Strong growth', (s.gdp-2)*3],
+        ['Low debt load', -(s.debt-100)*0.15]];}},
+    {id:'divider'},
+    {id:'shortT', name:'Citizens · Short-term',
+     calc:()=>{const s=state; return 52 - 5*(s.unemployment-4) + 0.15*(s.stock-100) + 0.08*(s.housing-100) - 0.6*(gov.tax-20) + 2*gov.spending - 2.5*(s.inflation-2);},
+     drivers:()=>{const s=state; return [
+        ['Jobs now', -(s.unemployment-4)*5],
+        ['Rising assets', (s.stock-100)*0.15],
+        ['Government support', gov.spending*2],
+        ['Low taxes', -(gov.tax-20)*0.6],
+        ['Prices biting', -(s.inflation-2)*2.5]];}},
+    {id:'longT', name:'Citizens · Long-term',
+     calc:()=>{const s=state; return 64 - 6*(s.inflation-2) - 0.20*(s.debt-100) - 2.5*Math.abs(s.gdp-2.5)
+              - 0.15*Math.max(0,s.housing-115) - 3*Math.max(0,D.deficit-5);},
+     drivers:()=>{const s=state; return [
+        ['Stable prices', -(s.inflation-2)*6],
+        ['Manageable debt', -(s.debt-100)*0.20],
+        ['Sustainable growth', -Math.abs(s.gdp-2.5)*2.5],
+        ['No housing bubble', -Math.max(0,s.housing-115)*0.15],
+        ['Fiscal discipline', -Math.max(0,D.deficit-5)*3]];}}
+  ];
+
+  // ============ GEOMETRY / SVG ============
+  const CX=450, CY=360, R=272, NR=58;
+  const posById={};
+  NODES.forEach((n,i)=>{ const a=(Math.PI*2*i/NODES.length)-Math.PI/2; posById[n.id]={x:CX+R*Math.cos(a), y:CY+R*Math.sin(a)}; });
+  const svg=document.getElementById('ring');
+  const NS='http://www.w3.org/2000/svg';
+  function E(tag,attrs){const e=document.createElementNS(NS,tag);for(const k in attrs)e.setAttribute(k,attrs[k]);return e;}
+
+  const edgeEls=[];
+  EDGES.forEach(([a,b])=>{
+    const pa=posById[a], pb=posById[b];
+    const mx=(pa.x+pb.x)/2, my=(pa.y+pb.y)/2;
+    const cx=mx+(CX-mx)*0.18, cy=my+(CY-my)*0.18;
+    const d=`M ${pa.x} ${pa.y} Q ${cx} ${cy} ${pb.x} ${pb.y}`;
+    const path=E('path',{d, class:'edge'});
+    svg.appendChild(path);
+    const dot=E('circle',{r:4.5, class:'pulse-dot', fill:'var(--gold-bright)'});
+    const anim=E('animateMotion',{dur:'1.1s', begin:'indefinite', fill:'freeze', path:d});
+    dot.appendChild(anim); svg.appendChild(dot);
+    edgeEls.push({a,b,path,dot,anim});
+  });
+
+  // hub
+  const hub=E('g',{});
+  hub.appendChild(E('circle',{cx:CX,cy:CY,r:104,class:'hub-ring'}));
+  hub.appendChild(E('circle',{cx:CX,cy:CY,r:84,class:'hub-ring'}));
+  const HUB=[{k:'inflation',l:'Inflation',u:'%',dx:-52,dy:-40,arrow:true},{k:'unemployment',l:'Unemploym.',u:'%',dx:16,dy:-40,arrow:true},
+             {k:'gdp',l:'Growth',u:'%',dx:-52,dy:20,arrow:true},{k:'fedRate',l:'Fed Rate',u:'%',dx:16,dy:20,arrow:false}];
+  const hubT={}; const hubArrow={};
+  HUB.forEach(h=>{const gx=CX+h.dx, gy=CY+h.dy; const lt=E('text',{x:gx,y:gy,class:'hub-label'});lt.textContent=h.l;hub.appendChild(lt);
+    const vt=E('text',{x:gx,y:gy+21,class:'hub-val'});hub.appendChild(vt);hubT[h.k]=vt;
+    if(h.arrow){ const at=E('text',{x:gx+40,y:gy+21,class:'hub-arrow'}); hub.appendChild(at); hubArrow[h.k]=at; }});
+  svg.appendChild(hub);
+
+  const nodeEls={};
+  NODES.forEach(n=>{
+    const p=posById[n.id];
+    const g=E('g',{class:'node-group','data-id':n.id});
+    g.appendChild(E('circle',{cx:p.x,cy:p.y,r:NR,class:'node-circle'}));
+    const words=n.label.split(' '); const lh=13; const sy=p.y-((words.length-1)*lh)/2-4;
+    words.forEach((w,i)=>{const t=E('text',{x:p.x,y:sy+i*lh,class:'node-label','text-anchor':'middle'});t.textContent=w;g.appendChild(t);});
+    const mt=E('text',{x:p.x,y:sy+words.length*lh+6,class:'node-metric','text-anchor':'middle'});
+    g.appendChild(mt);
+    g.addEventListener('click',()=>{ selected=(selected===n.id?null:n.id); renderStage(); });
+    svg.appendChild(g);
+    nodeEls[n.id]={g, metric:mt};
+  });
+
+  function renderStageValues(){
+    hubT.inflation.textContent=fmt(state.inflation,1)+'%';
+    hubT.unemployment.textContent=fmt(state.unemployment,1)+'%';
+    hubT.gdp.textContent=fmt(state.gdp,1)+'%';
+    hubT.fedRate.textContent=fmt(gov.fedRate,2)+'%';
+    ['inflation','unemployment','gdp'].forEach(k=>{
+      const a=arrowText(k), el=hubArrow[k]; if(!el)return;
+      el.textContent=a.t;
+      el.setAttribute('fill', a.c==='up'?'var(--up-bright)':a.c==='down'?'var(--down-bright)':'var(--text-dim)');
+    });
+    NODES.forEach(n=>{ nodeEls[n.id].metric.textContent = n.metric(state); });
+    if(selected) refreshDetailMetrics();
+  }
+
+  // ============ PULSES ============
+  function signStyle(sign){
+    if(sign>0) return {cls:'pos', fill:'var(--up-bright)'};
+    if(sign<0) return {cls:'neg', fill:'var(--down-bright)'};
+    return {cls:'neu', fill:'var(--gold-bright)'};
+  }
+  function pulseEdges(keys, sign){
+    const st = signStyle(sign);
+    keys.forEach(key=>{
+      const i=EDGE_INDEX[key]; if(i===undefined)return; const e=edgeEls[i];
+      e.path.classList.remove('pos','neg','neu'); void e.path.getBBox;
+      e.path.classList.add(st.cls); e.dot.setAttribute('fill', st.fill); e.dot.style.opacity=1;
+      try{e.anim.beginElement();}catch(x){}
+      setTimeout(()=>{e.dot.style.opacity=0;},1150);
+      setTimeout(()=>{e.path.classList.remove(st.cls);},1500);
+    });
+  }
+  // current directional pressure on each link (+ = expansionary/upward, - = contractionary/downward)
+  function edgePressure(a,b){
+    const s=state, g=gov, fedGap=g.fedRate-2.5, taxGap=(g.tax-20)/10;
+    const key=a+'-'+b;
+    switch(key){
+      case 'fed-banks': return -0.5*fedGap + 0.3*g.money;
+      case 'fed-bonds': return 0.5*g.money - 0.2*fedGap;
+      case 'gov-bonds': return 0.5*g.spending;
+      case 'gov-biz': return 0.5*g.spending - 0.5*taxGap;
+      case 'gov-house': return 0.5*g.spending - 0.5*taxGap;
+      case 'stocks-biz': return (s.stock-100)*0.05;
+      case 'stocks-house': return (s.stock-100)*0.05;
+      case 'house-biz': return (s.confidence-60)*0.06;
+      case 'house-housing': return -0.7*(D.mortgageRate-4) + 0.3*g.housingPolicy;
+      case 'housing-banks': return (s.housing-100)*0.06;
+      case 'labor-house': return (D.realWage-1)*1.2;
+      case 'labor-biz': return -0.6*(s.unemployment-4);
+      case 'banks-biz': return -0.6*fedGap + 0.3*g.money;
+    }
+    return 0;
+  }
+  function pulseAllEdges(){
+    edgeEls.forEach((e,i)=>setTimeout(()=>{
+      const p = edgePressure(e.a, e.b);
+      const st = signStyle(Math.abs(p)<0.15 ? 0 : (p>0?1:-1));
+      e.path.classList.add(st.cls); e.dot.setAttribute('fill', st.fill); e.dot.style.opacity=1;
+      try{e.anim.beginElement();}catch(x){}
+      setTimeout(()=>{e.dot.style.opacity=0;},900);
+      setTimeout(()=>{e.path.classList.remove(st.cls);},1100);
+    }, i*35));
+  }
+
+  // ============ STAGE DETAIL (overview vs sector) ============
+  function trendArrow(cur,prev){
+    if(prev===undefined||Math.abs(cur-prev)<0.01) return '<span class="trend-flat">—</span>';
+    return cur>prev?'<span class="trend-up">▲</span>':'<span class="trend-down">▼</span>';
+  }
+
+  function sectorMetrics(id){
+    const s=state, g=gov;
+    switch(id){
+      case 'fed': return [
+        {l:'Policy Rate',v:fmt(g.fedRate,2)+'%',h:'The lever you control directly.'},
+        {l:'Real Rate',v:fmt(D.realRate,1)+'%',h:'Rate minus inflation. Negative = still stimulating.'},
+        {l:'Balance Sheet',v:(g.money>0?'Expanding':g.money<0?'Shrinking':'Flat'),h:'QE adds money; QT removes it.'},
+        {l:'Mandate Read',v:(s.inflation>2.6?'Inflation hot':s.unemployment>5?'Jobs weak':'Near target'),h:'The Fed weighs prices vs jobs.'}];
+      case 'gov': return [
+        {l:'Budget Deficit',v:fmt(D.deficit,1)+'%',k:'deficit',h:'Spending above taxes, as % of GDP.'},
+        {l:'National Debt',v:Math.round(s.debt),k:'debt',h:'Accumulated borrowing (index).'},
+        {l:'Interest Cost',v:fmt(s.bondYield*s.debt/100,1),h:'Yield × debt — rises with both.'},
+        {l:'Fiscal Stance',v:(g.spending>0?'Expansionary':g.spending<0?'Austerity':'Neutral'),h:''}];
+      case 'bonds': return [
+        {l:'10-Yr Yield',v:fmt(s.bondYield,2)+'%',k:'bondYield',h:'The economy\u2019s benchmark rate. Lower = cheaper borrowing.'},
+        {l:'Foreign Demand',v:Math.round(s.foreignConf),k:'foreignConf',h:'Appetite of foreign govts & funds for US debt.'},
+        {l:'Dollar Strength',v:Math.round(s.dollar),h:'Strong rates & demand lift the dollar.'},
+        {l:'Supply Pressure',v:(g.spending>1?'Heavy issuance':'Normal'),h:'More deficit = more bonds to sell → higher yields.'}];
+      case 'stocks': return [
+        {l:'Index Level',v:Math.round(s.stock),k:'stock',h:'100 = starting point.'},
+        {l:'Rate Pressure',v:(g.fedRate>3.5?'Headwind':g.fedRate<1.5?'Tailwind':'Neutral'),h:'High rates discount future profits.'},
+        {l:'Earnings Backdrop',v:(s.gdp>2.5?'Strong':s.gdp<1?'Weak':'Steady'),h:'Growth feeds profits.'},
+        {l:'Liquidity',v:(g.money>0?'Ample (QE)':g.money<0?'Tight (QT)':'Neutral'),h:'Printed money often lifts assets.'}];
+      case 'house': return [
+        {l:'Affordability',v:Math.round(D.affordability),k:'affordability',h:'Can households actually afford to buy? Higher = easier.'},
+        {l:'Confidence',v:Math.round(s.confidence),k:'confidence',h:'Drives willingness to spend.'},
+        {l:'Real Income',v:fmt(D.realWage,1)+'%',k:'realWage',h:'Wage growth minus inflation.'},
+        {l:'Spending Power',v:(D.realWage>1.2?'Growing':D.realWage<0?'Shrinking':'Flat'),h:'Are paychecks getting ahead of prices?'}];
+      case 'housing': return [
+        {l:'Price Index',v:Math.round(s.housing),k:'housing',h:'100 = starting point.'},
+        {l:'Mortgage Rate',v:fmt(D.mortgageRate,1)+'%',k:'mortgageRate',h:'Fed rate + lender spread.'},
+        {l:'Affordability',v:Math.round(D.affordability),k:'affordability',h:'Prices & rates vs incomes.'},
+        {l:'Construction',v:(g.housingPolicy>0?'Booming':g.housingPolicy<0?'Constrained':'Normal'),h:'Policy shifts new supply.'}];
+      case 'labor': return [
+        {l:'Unemployment',v:fmt(s.unemployment,1)+'%',k:'unemployment',h:'Share of workers without jobs.'},
+        {l:'Wage Growth',v:fmt(s.wage,1)+'%',k:'wage',h:'Yearly pay increases.'},
+        {l:'Real Wages',v:fmt(D.realWage,1)+'%',k:'realWage',h:'Do paychecks beat inflation?'},
+        {l:'Hiring Momentum',v:(s.unemployment<3.8?'Hot':s.unemployment>5.2?'Cooling':'Balanced'),h:''}];
+      case 'biz': return [
+        {l:'GDP Growth',v:fmt(s.gdp,1)+'%',k:'gdp',h:'How fast output is expanding.'},
+        {l:'Borrowing Cost',v:fmt(g.fedRate+1.2,1)+'%',h:'What firms pay to finance.'},
+        {l:'Input Costs',v:Math.round(s.energyPrice),h:'Energy & materials (index).'},
+        {l:'Margins',v:(s.gdp-((s.energyPrice-100)/10)>2?'Comfortable':'Squeezed'),h:'Demand vs costs.'}];
+      case 'banks': return [
+        {l:'Mortgage Rate',v:fmt(D.mortgageRate,1)+'%',k:'mortgageRate',h:'What homebuyers actually pay.'},
+        {l:'Business Loan',v:fmt(g.fedRate+1.2,1)+'%',h:'Fed rate plus a spread.'},
+        {l:'Credit Conditions',v:(g.fedRate>3.5?'Tight':g.fedRate<1.5?'Loose':'Normal'),h:'Ease of getting a loan.'},
+        {l:'Collateral Values',v:(s.housing>105||s.stock>105?'Rising':s.housing<95?'Falling':'Stable'),h:'Asset values back loans.'}];
+    }
+    return [];
+  }
+  function sectorWhy(id){
+    const s=state,g=gov;
+    switch(id){
+      case 'fed': return g.money>0?'You\u2019re easing: low rates plus money-printing flood the system with cheap credit.':g.fedRate>3.5?'You\u2019re fighting inflation with restrictive rates — expect growth and housing to cool.':'Policy is roughly neutral right now.';
+      case 'gov': return D.deficit>5?'Big deficits fund the economy today but pile up debt and pressure bond yields tomorrow.':'Budget is relatively contained.';
+      case 'bonds': return s.foreignConf<55?'Foreign buyers are wary — that pushes yields up and can weaken the dollar, making all government borrowing pricier.':s.bondYield>4?'Yields are elevated — every dollar the government borrows now costs more.':'Yields are moderate and demand is healthy; borrowing is manageable.';
+      case 'stocks': return s.stock>110?'Markets are buoyant — great for asset holders, less so for anyone trying to buy in.':s.stock<92?'Markets are under pressure from rates or weak growth.':'Markets are treading water.';
+      case 'house': return D.realWage<0?'Inflation is outrunning wages — households are quietly getting poorer.':'Real incomes are holding up, supporting spending.';
+      case 'housing': return D.mortgageRate>6?'High mortgage rates are freezing out first-time buyers even as owners hold value.':g.housingPolicy>0?'Building incentives are adding supply, cooling price growth — good for buyers.':'The housing market is fairly balanced.';
+      case 'labor': return s.unemployment<3.8?'A tight labor market is pushing wages up — good for workers, watch for inflation.':s.unemployment>5.5?'Job losses are mounting; spending will follow.':'The job market is steady.';
+      case 'biz': return s.gdp<1?'Weak demand and/or high costs are squeezing firms — hiring slows next.':'Firms have room to invest and hire.';
+      case 'banks': return g.fedRate>3.5?'Tight credit: loans are expensive, which slows homebuying and business investment.':'Credit is flowing at reasonable cost.';
+    }
+    return '';
+  }
+
+  function renderStage(){
+    NODES.forEach(n=> nodeEls[n.id].g.classList.toggle('selected', n.id===selected));
+    const el=document.getElementById('stageDetail');
+    if(!selected){
+      el.innerHTML = overviewHTML();
+    } else {
+      const n=NODES.find(x=>x.id===selected);
+      const mets=sectorMetrics(selected);
+      el.innerHTML = `<div class="stage-detail">
+        <div class="detail-head"><span class="detail-title">${n.label}</span>
+          <button class="detail-back" id="backBtn">← Overview</button></div>
+        <div class="detail-role">${n.role}</div>
+        <div class="detail-metrics" id="detMetrics">${mets.map((m,i)=>metricHTML(m,i)).join('')}</div>
+        <div class="summary-line" style="margin-top:12px;">${sectorWhy(selected)}</div>
+      </div>`;
+      document.getElementById('backBtn').addEventListener('click',()=>{selected=null;renderStage();});
+    }
+    renderStageValues();
+  }
+  function metricHTML(m,i){
+    return `<div class="dm"><div class="dm-l"><span>${m.l}</span><span data-tr="${i}"></span></div>
+      <div class="dm-v">${m.v}</div>${m.h?`<div class="dm-h">${m.h}</div>`:''}</div>`;
+  }
+  function refreshDetailMetrics(){
+    const mets=sectorMetrics(selected);
+    const wrap=document.getElementById('detMetrics'); if(!wrap)return;
+    mets.forEach((m,i)=>{
+      const vEl=wrap.children[i]; if(!vEl)return;
+      vEl.querySelector('.dm-v').textContent=m.v;
+      const tr=vEl.querySelector('[data-tr]');
+      if(m.k){ const a=arrowText(m.k); tr.innerHTML=`<span class="trend-${a.c}">${a.t||'—'}</span>`; }
+      else tr.innerHTML='';
+    });
+  }
+
+  function overviewHTML(){
+    const s=state;
+    const chips=[
+      {l:'Inflation',v:fmt(s.inflation,1),u:'%'},{l:'Unemployment',v:fmt(s.unemployment,1),u:'%'},
+      {l:'Growth',v:fmt(s.gdp,1),u:'%'},{l:'Mortgage',v:fmt(D.mortgageRate,1),u:'%'},
+      {l:'Stocks',v:Math.round(s.stock),u:''},{l:'Housing',v:Math.round(s.housing),u:''},
+      {l:'Deficit',v:fmt(D.deficit,1),u:'%'},{l:'Confidence',v:Math.round(s.confidence),u:''}
+    ];
+    return `<div class="stage-detail">
+      <div class="summary-line">${bigPictureSentence()}</div>
+      <div class="headline-chips">${chips.map(c=>`<div class="chip"><div class="cl">${c.l}</div><div class="cv">${c.v}<span class="u">${c.u}</span></div></div>`).join('')}</div>
+      <div class="detail-role" style="margin-top:12px;margin-bottom:0;">Click any sector on the ring to zoom in on the details moving inside it.</div>
+    </div>`;
+  }
+  function bigPictureSentence(){
+    const s=state; let temp, price, jobs;
+    if(s.gdp>3) temp='The economy is running hot'; else if(s.gdp>1.5) temp='The economy is growing steadily'; else if(s.gdp>0) temp='Growth is sluggish'; else temp='The economy is contracting';
+    if(s.inflation>4) price='prices are climbing fast'; else if(s.inflation>2.6) price='inflation is a bit elevated'; else if(s.inflation>1) price='inflation is under control'; else price='prices are barely moving';
+    if(s.unemployment<4) jobs='jobs are plentiful'; else if(s.unemployment<5.5) jobs='the job market is soft'; else jobs='unemployment is high';
+    return `${temp}, ${price}, and ${jobs}.`;
+  }
+
+  // ============ RENDER LEVERS ============
+  function renderLevers(){
+    const groups={}; LEVERS.forEach(l=>{(groups[l.grp]=groups[l.grp]||[]).push(l);});
+    const panel=document.getElementById('leverPanel'); panel.innerHTML='';
+    Object.keys(groups).forEach(gname=>{
+      const gdiv=document.createElement('div'); gdiv.className='lever-group';
+      gdiv.innerHTML=`<div class="lg-title">${gname}</div>`;
+      groups[gname].forEach(l=>{
+        const row=document.createElement('div'); row.className='lever';
+        row.innerHTML=`<div class="lever-info"><span class="lever-name">${l.name}</span>
+            <span class="lever-stance" id="st-${l.id}">${l.stance(gov[l.id])}</span></div>
+          <div class="stepper">
+            <button class="step-btn down" data-lever="${l.id}" data-dir="-1">▼</button>
+            <span class="step-val" id="sv-${l.id}">${l.disp(gov[l.id])}</span>
+            <button class="step-btn up" data-lever="${l.id}" data-dir="1">▲</button>
+          </div>`;
+        gdiv.appendChild(row);
+      });
+      panel.appendChild(gdiv);
+    });
+    panel.querySelectorAll('.step-btn').forEach(btn=>{
+      btn.addEventListener('click',()=>stepLever(btn.dataset.lever, parseInt(btn.dataset.dir)));
+    });
+    updateLeverButtons();
+  }
+  function stepLever(id,dir){
+    const l=LEVERS.find(x=>x.id===id);
+    const nv=clamp(gov[id]+dir*l.step, l.min, l.max);
+    if(nv===gov[id]) return;
+    const rising = nv>gov[id];
+    gov[id]=nv;
+    document.getElementById('sv-'+id).textContent=l.disp(nv);
+    document.getElementById('st-'+id).textContent=l.stance(nv);
+    updateLeverButtons();
+    // sign of "expansionary" pulse: for tax, up is contractionary
+    let sign = rising?1:-1; if(id==='tax') sign=-sign;
+    pulseEdges(l.edges, sign);
+    log(leverMsg(l, nv, rising), true);
+    D=computeDerived(); renderStageValues();
+  }
+  function updateLeverButtons(){
+    LEVERS.forEach(l=>{
+      const down=document.querySelector(`.step-btn.down[data-lever="${l.id}"]`);
+      const up=document.querySelector(`.step-btn.up[data-lever="${l.id}"]`);
+      if(down) down.disabled = gov[l.id]<=l.min;
+      if(up) up.disabled = gov[l.id]>=l.max;
+    });
+  }
+  function leverMsg(l,v,rising){
+    const dir = rising?'raised':'lowered';
+    let body, who;
+    if(l.id==='fedRate'){ body=`You ${dir} the interest rate to ${fmt(v,2)}% — ${rising?'credit gets pricier':'borrowing gets cheaper'}.`;
+      who = rising?'savers, retirees & the dollar':'asset holders, businesses & borrowers'; }
+    else if(l.id==='money'){ body= rising?`More money printing (QE ${v>0?'+'+v:v}) — cheaper credit, upward pressure on assets & inflation.`:`Draining money (QT ${v}) — tighter credit, cooler asset prices.`;
+      who = rising?'asset holders & short-term spending':'savers & long-term stability'; }
+    else if(l.id==='spending'){ body= rising?`Government spends more (+${v}) — demand up now, deficit up later.`:`Government tightens the belt (${v}) — slower demand, healthier budget.`;
+      who = rising?'workers, businesses & short-term citizens':'government finances & long-term citizens'; }
+    else if(l.id==='tax'){ body=`Tax rate ${dir} to ${v}% — ${rising?'less money in private hands':'more spending power for households & firms'}.`;
+      who = rising?'government finances & long-term stability':'short-term citizens & businesses'; }
+    else if(l.id==='housingPolicy'){ body= rising?`Incentivizing home building (+${v}) — more supply cools prices, helps buyers.`:`Tightening housing rules (${v}) — less new supply, prices firm up.`;
+      who = rising?'prospective homebuyers & construction workers':'existing homeowners & asset holders'; }
+    else if(l.id==='energyPolicy'){ body= rising?`Investing in energy (+${v}) — costs the budget now, cheaper energy later.`:`Cutting energy spending (${v}) — saves budget, energy prices may drift up.`;
+      who = rising?'businesses & consumers (lower costs ahead)':'government finances today'; }
+    else return '';
+    return `${body} <em style="color:var(--up-bright);font-style:normal;">Good for: ${who}.</em>`;
+  }
+
+  // ============ RENDER STAKEHOLDERS ============
+  function stkColor(v){
+    // green (100) -> gold (50) -> red (0)
+    if(v>=50){ const t=(v-50)/50; return mix([201,162,39],[79,184,106],t); }
+    else { const t=v/50; return mix([203,87,74],[201,162,39],t); }
+  }
+  function mix(a,b,t){return `rgb(${Math.round(a[0]+(b[0]-a[0])*t)},${Math.round(a[1]+(b[1]-a[1])*t)},${Math.round(a[2]+(b[2]-a[2])*t)})`;}
+  const openStk={};
+  function renderStakeholders(){
+    const panel=document.getElementById('stkPanel');
+    if(panel.children.length===0){
+      STAKEHOLDERS.forEach(s=>{
+        if(s.id==='divider'){ const d=document.createElement('div'); d.className='stk-divider'; panel.appendChild(d); return; }
+        const div=document.createElement('div'); div.className='stk'; div.dataset.id=s.id;
+        div.innerHTML=`<div class="stk-head"><span class="stk-name"><span class="tri">▶</span>${s.name}</span>
+            <span class="stk-right"><span class="stk-mom flat" id="mo-${s.id}">—</span><span class="stk-score" id="sc-${s.id}">50</span></span></div>
+          <div class="stk-bartrack"><div class="stk-barfill" id="bf-${s.id}"></div></div>
+          <div class="stk-why"><div class="stk-why-inner" id="wy-${s.id}"></div></div>`;
+        div.querySelector('.stk-head').addEventListener('click',()=>{
+          openStk[s.id]=!openStk[s.id];
+          div.classList.toggle('open',openStk[s.id]);
+        });
+        panel.appendChild(div);
+      });
+    }
+    STAKEHOLDERS.forEach(s=>{
+      if(s.id==='divider')return;
+      const v=stk[s.id];
+      const bf=document.getElementById('bf-'+s.id);
+      const sc=document.getElementById('sc-'+s.id);
+      bf.style.width=v+'%'; bf.style.background=stkColor(v);
+      sc.textContent=Math.round(v); sc.style.color=stkColor(v);
+      const mo=document.getElementById('mo-'+s.id);
+      const vel=stkVel[s.id]||0, a=Math.abs(vel);
+      let n=0; if(a>=0.18)n=3; else if(a>=0.08)n=2; else if(a>=0.02)n=1;
+      if(n===0){ mo.className='stk-mom flat'; mo.textContent='—'; }
+      else if(vel>0){ mo.className='stk-mom up'; mo.textContent='▸'.repeat(n); }
+      else { mo.className='stk-mom down'; mo.textContent='◂'.repeat(n); }
+      // persona pop-up on crossing a benchmark
+      const nb=bandOf(v, stkBand[s.id]||'mid');
+      if(nb!==stkBand[s.id]){
+        if(personaReady && (nb==='low'||nb==='high')){
+          const p=STK_PERSONAS[s.id];
+          if(p) logPersona(p.name, nb==='low'?p.low:p.high, nb);
+        }
+        stkBand[s.id]=nb;
+      }
+      if(openStk[s.id]){
+        const ds=s.drivers().slice().sort((a,b)=>Math.abs(b[1])-Math.abs(a[1]));
+        const pos=ds.filter(d=>d[1]>0.3).slice(0,2).map(d=>`<span class="g">▲ ${d[0]}</span>`);
+        const neg=ds.filter(d=>d[1]<-0.3).slice(0,2).map(d=>`<span class="b">▼ ${d[0]}</span>`);
+        const all=pos.concat(neg);
+        document.getElementById('wy-'+s.id).innerHTML = all.length?all.join(' &nbsp;·&nbsp; '):'Roughly balanced right now.';
+      }
+    });
+  }
+
+  // band with hysteresis so a bar hovering at a threshold doesn't spam messages
+  function bandOf(v, prev){
+    if(prev==='low')  return v>34 ? 'mid' : 'low';
+    if(prev==='high') return v<70 ? 'mid' : 'high';
+    return v<28 ? 'low' : (v>76 ? 'high' : 'mid');
+  }
+
+  // First-person vignettes shown when a bar crosses a benchmark.
+  const STK_PERSONAS = {
+    assets: {name:'Asset Holder',
+      low:'You open your brokerage app and wince — your stocks and your home value have both slid. The nest egg looks a lot smaller than it did.',
+      high:'You check your portfolio: stocks and home value are both up sharply. On paper, you\u2019ve never been wealthier.'},
+    buyers: {name:'Prospective Homebuyer',
+      low:'You\u2019re a newly married couple with a baby on the way. After three months of house-hunting, high mortgage rates still put every home just out of reach.',
+      high:'You finally close on your first home — prices eased and the mortgage payment fits your budget. Keys in hand.'},
+    workers: {name:'Wage Worker',
+      low:'Your hours got cut and the raise you were promised isn\u2019t coming. Your paycheck isn\u2019t keeping up with the cost of living.',
+      high:'You just landed a better-paying job — employers are competing for workers, and for once your wages are outpacing prices.'},
+    savers: {name:'Saver / Retiree',
+      low:'You\u2019re newly retired, and a burst of inflation has quietly cut the real value of the savings you spent a lifetime building.',
+      high:'You\u2019re retired and comfortable — solid interest on your savings and low inflation keep your monthly income steady.'},
+    biz: {name:'Small Business Owner',
+      low:'You run a small business. With demand slowing and new orders drying up, you\u2019ve had to start laying people off.',
+      high:'Your business is thriving — orders are strong and loans are cheap, so you\u2019re hiring and finally expanding.'},
+    fiscal: {name:'Finance Minister',
+      low:'You watch the deficit balloon and borrowing costs climb. The budget is under real strain and the debt keeps growing.',
+      high:'You\u2019re a politician, and voters just re-elected you for keeping the budget balanced and the national debt under control.'},
+    shortT: {name:'Citizen — Today',
+      low:'The mood on the street is grim. People feel squeezed right now and aren\u2019t happy with how things are going.',
+      high:'People feel good today — jobs are easy to find and wallets feel full. Optimism is running high.'},
+    longT: {name:'Citizen — The Future',
+      low:'Economists warn that today\u2019s good times are being paid for with debt and inflation that the next generation will inherit.',
+      high:'The country feels on a stable, sustainable path — steady prices and manageable debt bode well for the years ahead.'}
+  };
+  function logPersona(name, text, band){
+    const l=document.getElementById('log');
+    const d=document.createElement('div');
+    d.className='log-entry persona '+(band==='low'?'persona-low':'persona-high');
+    const month=Math.floor(day/30);
+    d.innerHTML=`<span class="who">${band==='low'?'▼':'▲'} ${name} · ${MONTHS[month%12]} Yr ${Math.floor(month/12)+1}</span>${text}`;
+    l.insertBefore(d,l.firstChild);
+    while(l.children.length>60) l.removeChild(l.lastChild);
+  }
+
+  // ============ WORLD EVENTS ============
+  const EVENTS=[
+    {id:'oil', label:'⛽ Oil Shock', apply:()=>{ev.energy+=28; ev.wage+=0.8;}, msg:'Oil shock — energy costs spike, feeding inflation everywhere.', who:'energy producers (bad for households & businesses)'},
+    {id:'recession', label:'📉 Global Recession', apply:()=>{ev.demand-=3.5; ev.conf-=14; ev.foreign-=8;}, msg:'Global recession hits — demand and confidence slump worldwide.', who:'almost no one — savers fare least badly as inflation cools'},
+    {id:'research', label:'🔬 Research Breakthrough', apply:()=>{ev.gdp+=1.6; ev.stock+=6; ev.conf+=9;}, msg:'Research breakthrough — a productivity leap lifts growth, markets, and confidence.', who:'businesses, workers & long-term citizens'},
+    {id:'pandemic', label:'🦠 Pandemic', apply:()=>{ev.demand-=4; ev.unemp+=2.2; ev.conf-=16; ev.energy-=8;}, msg:'Pandemic strikes — a sudden demand and employment shock.', who:'almost no one — a broad shock to jobs & spending'}
+  ];
+  function renderEvents(){
+    const row=document.getElementById('eventsRow'); row.innerHTML='';
+    EVENTS.forEach(e=>{
+      const b=document.createElement('button'); b.className='event-btn'; b.textContent=e.label;
+      b.addEventListener('click',()=>{ e.apply(); log(`${e.msg} <em style="color:var(--up-bright);font-style:normal;">Good for: ${e.who}.</em>`,true); pulseAllEdges(); });
+      row.appendChild(b);
+    });
+  }
+
+  // ============ SCENARIOS ============
+  const SCENARIOS=[
+    {id:'2008', name:'2008 Financial Crisis', desc:'Housing collapses; the Fed slashes rates and floods money in.',
+     gov:{fedRate:0.5, money:5, spending:3, tax:18, housingPolicy:-1, energyPolicy:0},
+     event:()=>{ev.housing-=9; ev.conf-=14; ev.demand-=3;}},
+    {id:'1970s', name:'1970s Stagflation', desc:'An oil shock meets loose policy — inflation with stagnation.',
+     gov:{fedRate:3, money:2, spending:2, tax:22, housingPolicy:0, energyPolicy:-3},
+     event:()=>{ev.energy+=30; ev.wage+=2;}},
+    {id:'volcker', name:'Volcker Disinflation', desc:'Rates slammed sky-high to break inflation — at a cost.',
+     gov:{fedRate:8, money:-4, spending:-1, tax:22, housingPolicy:-2, energyPolicy:0},
+     event:()=>{}},
+    {id:'covid', name:'Post-COVID Boom', desc:'Huge stimulus and printing collide with supply shortages.',
+     gov:{fedRate:0.5, money:5, spending:5, tax:18, housingPolicy:0, energyPolicy:0},
+     event:()=>{ev.demand+=3; ev.energy+=16; ev.conf+=5; ev.housing+=5;}}
+  ];
+  function renderScenarios(){
+    const list=document.getElementById('scenarioList'); list.innerHTML='';
+    SCENARIOS.forEach(sc=>{
+      const b=document.createElement('button'); b.className='scenario-btn';
+      b.innerHTML=`${sc.name}<small>${sc.desc}</small>`;
+      b.addEventListener('click',()=>{
+        for(const k in sc.gov){ gov[k]=sc.gov[k]; }
+        sc.event();
+        LEVERS.forEach(l=>{document.getElementById('sv-'+l.id).textContent=l.disp(gov[l.id]);
+          document.getElementById('st-'+l.id).textContent=l.stance(gov[l.id]);});
+        updateLeverButtons();
+        D=computeDerived();
+        log(`Scenario loaded: ${sc.name}. Press play to watch it unfold.`, true);
+        pulseAllEdges(); renderStageValues();
+      });
+      list.appendChild(b);
+    });
+  }
+
+  // ============ CLOCK / TRANSPORT ============
+  const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  function updateClock(){
+    const month=Math.floor(day/30), year=Math.floor(month/12)+1, dom=(day%30)+1;
+    document.getElementById('clockDate').textContent=`${MONTHS[month%12]} · Yr ${year}`;
+    document.getElementById('dayFill').style.width=((day%30)/30*100)+'%';
+    document.getElementById('clockMeta').textContent=`Day ${dom} · ${playing?'running':'paused'}`;
+  }
+  function play(){ if(playing)return; playing=true;
+    document.getElementById('playBtn').textContent='⏸';
+    document.getElementById('playBtn').classList.add('playing');
+    timer=setInterval(tick, 1000/speed); updateClock();
+  }
+  function pause(){ playing=false; clearInterval(timer);
+    document.getElementById('playBtn').textContent='▶';
+    document.getElementById('playBtn').classList.remove('playing'); updateClock();
+  }
+  document.getElementById('playBtn').addEventListener('click',()=> playing?pause():play());
+  document.getElementById('speedGroup').addEventListener('click',e=>{
+    const b=e.target.closest('button'); if(!b)return;
+    speed=parseInt(b.dataset.speed);
+    document.querySelectorAll('#speedGroup button').forEach(x=>x.classList.toggle('active',x===b));
+    if(playing){ clearInterval(timer); timer=setInterval(tick,1000/speed); }
+  });
+  document.getElementById('resetBtn').addEventListener('click',()=>{ pause(); fullReset(); });
+
+  // ============ LOG ============
+  function log(text,isCause){
+    const l=document.getElementById('log'); const d=document.createElement('div');
+    d.className='log-entry'+(isCause?' cause':'');
+    const month=Math.floor(day/30), tag=isCause?'▸':`${MONTHS[month%12]}`;
+    d.innerHTML=`<span class="qt">${tag}</span>${text}`;
+    l.insertBefore(d,l.firstChild);
+    while(l.children.length>50) l.removeChild(l.lastChild);
+  }
+
+  // ============ UTIL ============
+  function clamp(v,a,b){return Math.max(a,Math.min(b,v));}
+  function fmt(n,d){return Number(n).toFixed(d);}
+
+  // ============ INIT ============
+  speed=1; playing=false;
+  renderLevers(); renderEvents(); renderScenarios();
+  fullReset();
+})();
+</script>
+</body>
+</html>
