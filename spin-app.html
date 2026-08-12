@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>SPIN — Full Demo</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"/>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --abyss:#06111E;--ink:#0B1C2E;--ink-2:#102639;--ink-3:#163150;
+  --hull:#234763;--hull-dim:#1A3650;
+  --phosphor:#5BE6CB;--phosphor-dim:#2C9A85;
+  --lantern:#F2B65E;--parchment:#E9F1F6;--fog:#88A0B2;--fog-dim:#51697C;
+}
+html,body{background:radial-gradient(900px 600px at 50% -10%,#0e2a40,transparent 60%),var(--abyss);color:var(--parchment);font-family:'Inter',system-ui,sans-serif;min-height:100vh;-webkit-font-smoothing:antialiased;padding:26px 16px 60px}
+.stage{max-width:840px;margin:0 auto}
+.stage-head{text-align:center;margin-bottom:20px}
+.stage-head h1{font-family:'Fraunces',serif;font-weight:600;font-size:24px;letter-spacing:.05em}
+.stage-head p{color:var(--fog);font-size:13px;margin-top:6px}
+.selector{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-bottom:26px}
+.selector button{background:var(--ink);border:1px solid var(--hull-dim);color:var(--fog);font-family:inherit;font-size:13px;font-weight:500;padding:9px 16px;border-radius:99px;cursor:pointer;transition:.15s}
+.selector button:hover{border-color:var(--hull)}
+.selector button.on{background:var(--ink-3);color:var(--phosphor);border-color:var(--phosphor-dim)}
+.mono{font-family:'Space Mono',monospace}
+.eyebrow{font-size:10px;letter-spacing:.3em;text-transform:uppercase;color:var(--phosphor-dim);margin-bottom:10px}
+
+/* phone */
+.phone-wrap{display:flex;justify-content:center}
+.phone{width:390px;max-width:100%;height:800px;background:var(--abyss);border:10px solid #0a0f16;border-radius:44px;box-shadow:0 40px 100px -30px #000,0 0 0 1px var(--hull-dim);overflow:hidden;position:relative;display:flex;flex-direction:column}
+.notch{height:30px;display:flex;align-items:center;justify-content:space-between;padding:0 26px;font-size:12px;color:var(--parchment);flex:none;z-index:30}
+.notch .dots{display:flex;gap:5px;font-size:12px}
+.screen{flex:1;overflow-y:auto;overflow-x:hidden;position:relative}
+.screen::-webkit-scrollbar{width:0}
+
+/* top-mode views */
+.mode{display:none;height:100%}
+.mode.active{display:flex;flex-direction:column;height:100%}
+
+/* bottom tab bar */
+.tabbar{flex:none;display:flex;border-top:1px solid var(--hull-dim);background:var(--ink);padding:8px 0 14px}
+.tab{flex:1;background:none;border:none;color:var(--fog-dim);font-family:inherit;font-size:10px;letter-spacing:.08em;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:4px;padding:4px;transition:color .15s}
+.tab svg{width:23px;height:23px;stroke:currentColor;fill:none;stroke-width:1.6}
+.tab.on{color:var(--phosphor)}
+
+/* app tab content */
+.tabview{display:none}
+.tabview.active{display:block}
+
+/* ---- CHART (home/map) ---- */
+.home-hero{padding:18px 20px 14px}
+.home-hero h2{font-family:'Fraunces',serif;font-weight:400;font-size:23px;line-height:1.15}
+.home-hero h2 em{font-style:italic;color:var(--phosphor)}
+.home-hero p{color:var(--fog);font-size:13px;margin-top:7px;line-height:1.5}
+.map-card{margin:0 16px;border:1px solid var(--hull);border-radius:13px;overflow:hidden}
+.map-head{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid var(--hull-dim);background:var(--ink-2)}
+.map-head .t{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--fog)}
+.map-head .coord{font-family:'Space Mono',monospace;font-size:10px;color:var(--phosphor-dim)}
+#map{height:280px;width:100%}
+.map-legend{display:flex;gap:14px;padding:9px 14px;background:var(--ink-2);border-top:1px solid var(--hull-dim);flex-wrap:wrap}
+.legend-item{display:flex;align-items:center;gap:6px;font-size:10px;color:var(--fog)}
+.legend-dot{width:9px;height:9px;border-radius:50%;flex:none}
+.leaflet-container{background:#06111E}
+.leaflet-control-zoom{border:1px solid var(--hull)!important}
+.leaflet-control-zoom a{color:var(--parchment)!important;background:var(--ink)!important;border-bottom:1px solid var(--hull)!important}
+.leaflet-control-zoom a:hover{background:var(--ink-2)!important}
+.leaflet-control-attribution{background:rgba(6,17,30,.7)!important;color:var(--fog-dim)!important;font-size:8px!important}
+.leaflet-control-attribution a{color:var(--fog-dim)!important}
+.spin-popup .leaflet-popup-content-wrapper{background:var(--ink-2);border:1px solid var(--hull);border-radius:10px;color:var(--parchment)}
+.spin-popup .leaflet-popup-tip{background:var(--ink-2)}
+.spin-popup .leaflet-popup-content{margin:11px 13px;font-family:'Inter';font-size:13px}
+.popup-name{font-weight:600;font-size:14px;margin-bottom:2px}
+.popup-miss{color:var(--fog);font-size:12px}
+.popup-miss b{color:var(--parchment)}
+.popup-gap{display:inline-block;margin-top:6px;font-family:'Space Mono',monospace;font-size:12px}
+.popup-gap.close{color:var(--lantern)}.popup-gap.far{color:var(--phosphor)}
+
+.sec{padding:22px 20px 0}
+.sec-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:13px}
+.sec-head h3{font-family:'Fraunces',serif;font-weight:500;font-size:18px}
+.sec-head .meta{font-size:10px;color:var(--fog-dim);letter-spacing:.12em;text-transform:uppercase}
+.wake{display:grid;grid-template-columns:40px 1fr auto;gap:11px;align-items:center;padding:13px;border:1px solid var(--hull-dim);border-radius:11px;background:var(--ink);margin-bottom:8px;cursor:pointer;transition:.18s}
+.wake:hover{border-color:var(--phosphor-dim);transform:translateY(-1px)}
+.av{width:40px;height:40px;border-radius:50%;display:grid;place-items:center;font-family:'Fraunces',serif;font-size:15px;color:var(--abyss);font-weight:600;flex:none}
+.wake .who{font-weight:600;font-size:14px}
+.wake .where{color:var(--fog);font-size:11px;margin-top:2px}
+.wake .where b{color:var(--parchment);font-weight:500}
+.wake .miss .big{font-family:'Space Mono',monospace;font-size:13px;color:var(--phosphor);text-align:right}
+.wake .miss .lbl{font-size:8px;letter-spacing:.14em;text-transform:uppercase;color:var(--fog-dim);text-align:right}
+.wake.close .miss .big{color:var(--lantern)}
+.crew-row{display:flex;flex-wrap:wrap;gap:9px}
+.crew-mem{display:flex;flex-direction:column;align-items:center;gap:5px;width:54px}
+.crew-mem .av{width:46px;height:46px}
+.crew-mem span{font-size:11px;color:var(--fog)}
+.tieoff-btn{width:54px;background:none;border:none;color:inherit;font-family:inherit;display:flex;flex-direction:column;align-items:center;gap:5px;cursor:pointer}
+.tieoff-btn .knot{width:46px;height:46px;border-radius:50%;border:1.5px dashed var(--hull);display:grid;place-items:center;color:var(--phosphor);font-size:20px;transition:.2s}
+.tieoff-btn:hover .knot{border-color:var(--phosphor)}
+.tieoff-btn span{font-size:11px;color:var(--fog)}
+.contacts-panel{border:1px solid var(--hull);border-radius:12px;background:var(--ink);overflow:hidden;margin-top:14px}
+.contacts-head{padding:13px 15px;border-bottom:1px solid var(--hull-dim);display:flex;align-items:center;justify-content:space-between}
+.contacts-head .ct{font-size:13px;font-weight:600}
+.contacts-head .note{font-size:10px;color:var(--fog)}
+.contact-row{display:flex;align-items:center;gap:11px;padding:10px 15px;border-bottom:1px solid var(--hull-dim)}
+.contact-row:last-child{border:none}
+.contact-row .info{flex:1}
+.contact-row .nm{font-size:13px;font-weight:500}
+.contact-row .ph{font-size:11px;color:var(--fog);font-family:'Space Mono',monospace}
+.contact-row .mutual{font-size:10px;color:var(--phosphor-dim);margin-top:2px}
+.add-btn{background:var(--phosphor);color:var(--abyss);border:none;font-family:inherit;font-size:12px;font-weight:600;padding:7px 13px;border-radius:8px;cursor:pointer;white-space:nowrap}
+.add-btn.added{background:var(--hull);color:var(--fog)}
+
+/* ---- OPEN WATER ---- */
+.ow-head{padding:22px 20px 14px}
+.ow-head h2{font-family:'Fraunces',serif;font-weight:400;font-size:24px}
+.ow-head h2 em{font-style:italic;color:var(--phosphor)}
+.ow-head p{color:var(--fog);font-size:13px;margin-top:7px;line-height:1.5}
+.ow-optin{margin:0 20px 16px;background:var(--ink-2);border:1px solid var(--phosphor-dim);border-radius:13px;padding:14px;display:flex;align-items:center;justify-content:space-between;gap:12px}
+.ow-optin .txt{font-size:13px;line-height:1.45}
+.ow-optin .txt b{color:var(--phosphor)}.ow-optin .txt span{color:var(--fog);font-size:11px}
+.ow-list{padding:0 20px}
+.ow-card{background:var(--ink);border:1px solid var(--hull-dim);border-radius:14px;padding:15px;margin-bottom:11px}
+.ow-card-top{display:flex;align-items:center;gap:12px}
+.ow-card .av{width:44px;height:44px}
+.ow-card .nm{font-size:15px;font-weight:600}
+.ow-card .dist{font-size:11px;color:var(--fog);margin-top:1px;font-family:'Space Mono',monospace}
+.ow-shared{font-family:'Fraunces',serif;font-size:21px;font-weight:500;color:var(--phosphor);margin-left:auto;text-align:center;line-height:1}
+.ow-shared small{display:block;font-family:'Inter';font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--fog-dim);font-weight:400;margin-top:3px}
+.ow-tags{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0}
+.ow-tag{font-size:11px;color:var(--fog);background:var(--ink-2);border:1px solid var(--hull-dim);padding:4px 9px;border-radius:99px}
+.ow-tag.match{color:var(--phosphor);border-color:var(--phosphor-dim)}
+.hail-btn{width:100%;background:none;border:1px solid var(--phosphor-dim);color:var(--phosphor);font-family:inherit;font-weight:600;font-size:13px;padding:11px;border-radius:10px;cursor:pointer;transition:.15s;display:flex;align-items:center;justify-content:center;gap:7px}
+.hail-btn:hover{background:#5be6cb12}
+.hail-btn.sent{border-color:var(--hull);color:var(--fog);cursor:default}
+.ow-note{font-size:11px;color:var(--fog);text-align:center;padding:0 20px 24px;line-height:1.5}
+
+/* ---- PROFILE ---- */
+.prof-hero{padding:24px 20px 18px;text-align:center;border-bottom:1px solid var(--hull-dim);position:relative}
+.prof-hero::before{content:"";position:absolute;inset:0;background:radial-gradient(280px 110px at 50% 0,#13344d80,transparent 70%);pointer-events:none}
+.prof-av{width:78px;height:78px;border-radius:50%;background:linear-gradient(135deg,#5BE6CB,#2C9A85);display:grid;place-items:center;font-family:'Fraunces',serif;font-size:31px;font-weight:600;color:var(--abyss);margin:0 auto 11px}
+.prof-name{font-family:'Fraunces',serif;font-size:23px;font-weight:500}
+.prof-handle{font-family:'Space Mono',monospace;font-size:13px;color:var(--phosphor);margin-top:2px}
+.prof-bio{max-width:30ch;margin:12px auto 0;position:relative}
+.prof-bio p{font-size:13px;color:var(--fog);line-height:1.55}
+.bio-edit-btn{background:none;border:1px solid var(--hull-dim);color:var(--fog);font-family:inherit;font-size:11px;padding:5px 13px;border-radius:99px;cursor:pointer;margin-top:10px;transition:.15s}
+.bio-edit-btn:hover{border-color:var(--phosphor-dim);color:var(--phosphor)}
+.bio-editor{max-width:30ch;margin:12px auto 0;display:none}
+.bio-editor.open{display:block}
+.bio-editor textarea{width:100%;background:var(--ink-2);border:1px solid var(--hull);border-radius:10px;color:var(--parchment);font-family:'Inter';font-size:13px;padding:11px;resize:none;line-height:1.5}
+.bio-editor textarea:focus{outline:none;border-color:var(--phosphor-dim)}
+.bio-editor .row{display:flex;gap:8px;margin-top:8px}
+.bio-editor .count{font-size:10px;color:var(--fog-dim);text-align:right;margin-top:5px}
+.bio-save{flex:1;background:var(--phosphor);color:var(--abyss);border:none;font-family:inherit;font-weight:600;font-size:13px;padding:9px;border-radius:9px;cursor:pointer}
+.bio-cancel{flex:1;background:var(--ink-2);color:var(--fog);border:1px solid var(--hull-dim);font-family:inherit;font-size:13px;padding:9px;border-radius:9px;cursor:pointer}
+.prof-since{font-size:10px;color:var(--fog-dim);margin-top:13px;letter-spacing:.1em;text-transform:uppercase}
+.prof-stats{display:grid;grid-template-columns:repeat(3,1fr);border-bottom:1px solid var(--hull-dim)}
+.prof-stat{padding:16px 6px;text-align:center;border-right:1px solid var(--hull-dim)}
+.prof-stat:last-child{border:none}
+.prof-stat .n{font-family:'Fraunces',serif;font-size:22px;font-weight:500;color:var(--phosphor)}
+.prof-stat .l{font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--fog);margin-top:4px}
+.prof-sec{padding:18px 20px;border-bottom:1px solid var(--hull-dim)}
+.prof-sec h3{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--fog);margin-bottom:13px}
+.harbor{display:flex;align-items:center;gap:11px;margin-bottom:12px}
+.harbor:last-child{margin-bottom:0}
+.harbor .pin{width:28px;height:28px;border-radius:8px;background:var(--ink-2);border:1px solid var(--hull-dim);display:grid;place-items:center;font-size:13px;flex:none}
+.harbor .info{flex:1}
+.harbor .nm{font-size:13px;font-weight:500}
+.harbor .freq{font-size:10px;color:var(--fog);margin-top:1px}
+.harbor .bar{width:50px;height:5px;background:var(--ink-2);border-radius:99px;overflow:hidden;flex:none}
+.harbor .bar i{display:block;height:100%;background:var(--phosphor)}
+.toggle-row{display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--hull-dim);gap:14px}
+.toggle-row:last-child{border:none}
+.toggle-row .tl{font-size:13px}
+.toggle-row .td{font-size:11px;color:var(--fog);margin-top:2px;line-height:1.4}
+.tog{width:44px;height:26px;border-radius:99px;background:var(--hull);border:none;cursor:pointer;position:relative;transition:.2s;flex:none}
+.tog::after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;transition:.2s}
+.tog.on{background:var(--phosphor-dim)}.tog.on::after{left:21px}
+
+/* ---- ONBOARDING ---- */
+.ob{height:100%;display:flex;flex-direction:column;padding:26px 24px 24px}
+.ob-top{flex:1;display:flex;flex-direction:column;justify-content:center}
+.ob-art{height:180px;display:flex;align-items:center;justify-content:center}
+.ob h2{font-family:'Fraunces',serif;font-weight:400;font-size:27px;line-height:1.12;margin-bottom:11px}
+.ob h2 em{font-style:italic;color:var(--phosphor)}
+.ob .lead{color:var(--fog);font-size:14px;line-height:1.55}
+.ob-actions{flex:none;margin-top:18px}
+.btn-primary{width:100%;background:var(--phosphor);color:var(--abyss);border:none;font-family:inherit;font-weight:600;font-size:15px;padding:15px;border-radius:13px;cursor:pointer}
+.btn-primary:hover{background:#4dd0b8}
+.btn-ghost{width:100%;background:none;border:none;color:var(--fog);font-family:inherit;font-size:13px;padding:12px;cursor:pointer}
+.dots-prog{display:flex;gap:6px;justify-content:center;margin-bottom:14px}
+.dots-prog i{width:7px;height:7px;border-radius:50%;background:var(--hull);transition:.2s}
+.dots-prog i.on{background:var(--phosphor);width:20px;border-radius:99px}
+.perm-sheet{position:absolute;inset:0;background:rgba(4,9,15,.7);display:none;align-items:flex-end;z-index:50}
+.perm-sheet.open{display:flex}
+.perm-card{background:#1c1c1e;width:100%;border-radius:20px 20px 0 0;padding:20px;text-align:center;color:#fff}
+.perm-card h4{font-size:16px;font-weight:600;margin-bottom:8px}
+.perm-card p{font-size:13px;color:#a0a0a8;line-height:1.5}
+.perm-card .map-prev{height:74px;background:linear-gradient(135deg,#13344d,#0b1c2e);border-radius:10px;margin:12px 0;display:flex;align-items:center;justify-content:center;color:var(--phosphor-dim);font-size:11px}
+.perm-opt{border-top:1px solid #38383a;padding:13px;font-size:16px;color:#0a84ff;cursor:pointer}
+.perm-opt.bold{font-weight:600}
+
+/* ---- WAKE ALERT ---- */
+.lockscreen{height:100%;background:linear-gradient(180deg,#0a1826,#040b12);padding:46px 16px 16px;display:flex;flex-direction:column}
+.ls-time{text-align:center;margin-bottom:44px}
+.ls-time .clock{font-family:'Fraunces',serif;font-size:58px;font-weight:400;line-height:1}
+.ls-time .date{color:var(--fog);font-size:13px;margin-top:4px}
+.notif{background:rgba(28,40,55,.85);border:1px solid var(--hull-dim);border-radius:18px;padding:13px;display:flex;gap:11px;animation:slideIn .6s cubic-bezier(.2,.8,.2,1);cursor:pointer}
+@keyframes slideIn{from{opacity:0;transform:translateY(-16px)}to{opacity:1;transform:translateY(0)}}
+.notif .app-ico{width:38px;height:38px;border-radius:9px;background:var(--ink-2);border:1px solid var(--hull);display:grid;place-items:center;flex:none}
+.notif .body{flex:1}
+.notif .head-row{display:flex;justify-content:space-between;align-items:baseline}
+.notif .app-name{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--phosphor)}
+.notif .time{font-size:11px;color:var(--fog)}
+.notif .title{font-size:14px;font-weight:600;margin-top:3px}
+.notif .msg{font-size:13px;color:var(--fog);margin-top:2px;line-height:1.45}
+.notif .msg b{color:var(--parchment);font-weight:500}
+.ls-hint{margin-top:auto;text-align:center;color:var(--fog-dim);font-size:12px;padding-bottom:6px}
+.ls-hint .swipe{display:block;margin-bottom:8px;font-size:20px;animation:bob 1.8s ease-in-out infinite}
+@keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
+
+.caption{text-align:center;color:var(--fog);font-size:13px;margin-top:20px;max-width:540px;margin-inline:auto;line-height:1.6}
+@media(prefers-reduced-motion:reduce){.notif,.ls-hint .swipe{animation:none}}
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="stage-head">
+    <h1>SPIN — Full Demo</h1>
+    <p>The app with bottom-tab navigation · plus the onboarding &amp; alert flows</p>
+  </div>
+
+  <div class="selector">
+    <button class="on" onclick="setMode('app',this)">The app</button>
+    <button onclick="setMode('onboarding',this)">Onboarding</button>
+    <button onclick="setMode('wakealert',this)">Wake alert</button>
+  </div>
+
+  <div class="phone-wrap">
+    <div class="phone">
+      <div class="notch">
+        <span class="mono">9:41</span>
+        <div class="dots"><span>📶</span><span>🔋</span></div>
+      </div>
+      <div class="screen">
+
+        <!-- ============ APP MODE ============ -->
+        <div class="mode active" id="mode-app">
+          <div class="screen" style="flex:1;overflow-y:auto" id="app-scroll">
+
+            <!-- CHART TAB -->
+            <div class="tabview active" id="tab-chart">
+              <div class="home-hero">
+                <div class="eyebrow">This week's chart · Orlando, FL</div>
+                <h2>You crossed <em>four wakes</em> without ever looking up.</h2>
+                <p>Tap a node on the chart, or a wake below, to see where your paths brushed past each other.</p>
+              </div>
+              <div class="map-card">
+                <div class="map-head"><span class="t">Live crossing chart</span><span class="coord">28.54°N · 81.38°W</span></div>
+                <div id="map"></div>
+                <div class="map-legend">
+                  <div class="legend-item"><div class="legend-dot" style="background:#5BE6CB"></div>Crew crossing</div>
+                  <div class="legend-item"><div class="legend-dot" style="background:#F2B65E"></div>Near-miss</div>
+                  <div class="legend-item"><div class="legend-dot" style="background:#E9F1F6"></div>You</div>
+                </div>
+              </div>
+
+              <div class="sec">
+                <div class="sec-head"><h3>Wakes you crossed</h3><span class="meta">This week</span></div>
+                <div class="wake close" onclick="flyTo(28.5405,-81.3787)">
+                  <div class="av" style="background:#F2B65E">P</div>
+                  <div><div class="who">Priya K.</div><div class="where">Both at <b>Stardust Video &amp; Coffee</b> · Wed 9:14 AM</div></div>
+                  <div class="miss"><div class="big">7 min</div><div class="lbl">so close</div></div>
+                </div>
+                <div class="wake" onclick="flyTo(28.5484,-81.3654)">
+                  <div class="av" style="background:#5BE6CB">S</div>
+                  <div><div class="who">Sarah M.</div><div class="where">Both at <b>Lake Eola Park</b> · Sat 8:40 AM</div></div>
+                  <div class="miss"><div class="big">19 min</div><div class="lbl">apart</div></div>
+                </div>
+                <div class="wake" onclick="flyTo(28.5383,-81.3792)">
+                  <div class="av" style="background:#7FB3D5">D</div>
+                  <div><div class="who">Devon R.</div><div class="where">Overlapped at <b>The Hammered Lamb</b> · Fri 9:50 PM</div></div>
+                  <div class="miss"><div class="big">31 min</div><div class="lbl">unseen</div></div>
+                </div>
+              </div>
+
+              <div class="sec" style="padding-bottom:24px">
+                <div class="sec-head"><h3>Your Crew</h3><span class="meta" id="crew-count">5 tied off</span></div>
+                <div class="crew-row" id="crew-row">
+                  <div class="crew-mem"><div class="av" style="background:#F2B65E">P</div><span>Priya</span></div>
+                  <div class="crew-mem"><div class="av" style="background:#5BE6CB">S</div><span>Sarah</span></div>
+                  <div class="crew-mem"><div class="av" style="background:#7FB3D5">D</div><span>Devon</span></div>
+                  <div class="crew-mem"><div class="av" style="background:#C9A0DC">M</div><span>Marcus</span></div>
+                  <div class="crew-mem"><div class="av" style="background:#E08E79">J</div><span>Jordan</span></div>
+                  <button class="tieoff-btn" onclick="document.getElementById('modal').classList.add('open')"><div class="knot">⚓</div><span>Tie off</span></button>
+                </div>
+                <div class="contacts-panel">
+                  <div class="contacts-head"><span class="ct">From your contacts</span><span class="note">2 already aboard</span></div>
+                  <div class="contact-row">
+                    <div class="av" style="background:#5E9E8A;width:38px;height:38px;font-size:14px">R</div>
+                    <div class="info"><div class="nm">Riley Navarro</div><div class="ph">(407) 555-0182</div><div class="mutual">1 mutual crew member</div></div>
+                    <button class="add-btn" onclick="addCrew(this,'Riley','R','#5E9E8A')">Tie off</button>
+                  </div>
+                  <div class="contact-row">
+                    <div class="av" style="background:#9E7A5E;width:38px;height:38px;font-size:14px">T</div>
+                    <div class="info"><div class="nm">Taylor Osei</div><div class="ph">(321) 555-0047</div><div class="mutual">Joined last week</div></div>
+                    <button class="add-btn" onclick="addCrew(this,'Taylor','T','#9E7A5E')">Tie off</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- OPEN WATER TAB -->
+            <div class="tabview" id="tab-openwater">
+              <div class="ow-head">
+                <div class="eyebrow">Open Water · Plus</div>
+                <h2>Regulars in your <em>same harbors</em>.</h2>
+                <p>Not your Crew — people who keep turning up where you do. Hail them; you only connect if they hail back.</p>
+              </div>
+              <div class="ow-optin">
+                <div class="txt"><b>You're visible in Open Water</b><br><span>Anonymous until you both hail.</span></div>
+                <button class="tog on" onclick="this.classList.toggle('on')"></button>
+              </div>
+              <div class="ow-list">
+                <div class="ow-card">
+                  <div class="ow-card-top">
+                    <div class="av" style="background:#5BE6CB">R</div>
+                    <div><div class="nm">River</div><div class="dist">~0.3 mi · most mornings</div></div>
+                    <div class="ow-shared">11<small>shared harbors</small></div>
+                  </div>
+                  <div class="ow-tags"><span class="ow-tag match">Stardust Coffee</span><span class="ow-tag match">Lake Eola loop</span><span class="ow-tag">Deeply Coffee</span><span class="ow-tag">+8 more</span></div>
+                  <button class="hail-btn" onclick="hail(this)">📻 Send a hail</button>
+                </div>
+                <div class="ow-card">
+                  <div class="ow-card-top">
+                    <div class="av" style="background:#C9A0DC">A</div>
+                    <div><div class="nm">Avery</div><div class="dist">~0.6 mi · evenings</div></div>
+                    <div class="ow-shared">7<small>shared harbors</small></div>
+                  </div>
+                  <div class="ow-tags"><span class="ow-tag match">The Hammered Lamb</span><span class="ow-tag match">Lil Indies</span><span class="ow-tag">WULF</span><span class="ow-tag">+4 more</span></div>
+                  <button class="hail-btn" onclick="hail(this)">📻 Send a hail</button>
+                </div>
+                <div class="ow-card">
+                  <div class="ow-card-top">
+                    <div class="av" style="background:#7FB3D5">K</div>
+                    <div><div class="nm">Kai</div><div class="dist">~1.1 mi · weekends</div></div>
+                    <div class="ow-shared">5<small>shared harbors</small></div>
+                  </div>
+                  <div class="ow-tags"><span class="ow-tag match">Baldwin Park Market</span><span class="ow-tag">Fleet Farming</span><span class="ow-tag">East End Market</span></div>
+                  <button class="hail-btn" onclick="hail(this)">📻 Send a hail</button>
+                </div>
+              </div>
+              <div class="ow-note">A hail shares nothing until it's returned. No reply, no exposure.</div>
+            </div>
+
+            <!-- PROFILE TAB -->
+            <div class="tabview" id="tab-profile">
+              <div class="prof-hero">
+                <div class="prof-av">Y</div>
+                <div class="prof-name">You</div>
+                <div class="prof-handle">@you</div>
+                <div class="prof-bio" id="bioDisplay">
+                  <p id="bioText">Sunrise laps around Lake Eola, then coffee till the world wakes up. Easily found in the same three harbors. ⚓</p>
+                  <button class="bio-edit-btn" onclick="openBio()">Edit bio</button>
+                </div>
+                <div class="bio-editor" id="bioEditor">
+                  <textarea id="bioInput" maxlength="140" rows="3" oninput="updateCount()"></textarea>
+                  <div class="count"><span id="bioCount">0</span>/140</div>
+                  <div class="row">
+                    <button class="bio-cancel" onclick="cancelBio()">Cancel</button>
+                    <button class="bio-save" onclick="saveBio()">Save</button>
+                  </div>
+                </div>
+                <div class="prof-since">Sailing since March 2025</div>
+              </div>
+              <div class="prof-stats">
+                <div class="prof-stat"><div class="n">128</div><div class="l">Wakes<br>crossed</div></div>
+                <div class="prof-stat"><div class="n">7</div><div class="l">Crew<br>tied off</div></div>
+                <div class="prof-stat"><div class="n">14</div><div class="l">Home<br>harbors</div></div>
+              </div>
+              <div class="prof-sec">
+                <h3>Your harbors</h3>
+                <div class="harbor"><div class="pin">☕</div><div class="info"><div class="nm">Stardust Video &amp; Coffee</div><div class="freq">visited 23× this month</div></div><div class="bar"><i style="width:92%"></i></div></div>
+                <div class="harbor"><div class="pin">🌳</div><div class="info"><div class="nm">Lake Eola Park</div><div class="freq">visited 16× this month</div></div><div class="bar"><i style="width:64%"></i></div></div>
+                <div class="harbor"><div class="pin">🍺</div><div class="info"><div class="nm">The Hammered Lamb</div><div class="freq">visited 9× this month</div></div><div class="bar"><i style="width:38%"></i></div></div>
+                <div class="harbor"><div class="pin">🛒</div><div class="info"><div class="nm">Baldwin Park Market</div><div class="freq">visited 4× this month</div></div><div class="bar"><i style="width:18%"></i></div></div>
+              </div>
+              <div class="prof-sec">
+                <h3>Who can cross your wake</h3>
+                <div class="toggle-row"><div><div class="tl">My Crew</div><div class="td">People you've tied off always see your crossings.</div></div><button class="tog on" onclick="this.classList.toggle('on')"></button></div>
+                <div class="toggle-row"><div><div class="tl">Appear in Open Water</div><div class="td">Let regulars discover you, anonymously, until you both hail.</div></div><button class="tog" onclick="this.classList.toggle('on')"></button></div>
+                <div class="toggle-row"><div><div class="tl">Pause all logging</div><div class="td">Go dark. No locations recorded, no crossings found.</div></div><button class="tog" onclick="this.classList.toggle('on')"></button></div>
+              </div>
+              <div class="prof-sec" style="border:none;text-align:center"><button class="btn-ghost" style="color:var(--phosphor)">Manage data &amp; privacy</button></div>
+            </div>
+
+          </div>
+
+          <!-- BOTTOM TAB BAR -->
+          <div class="tabbar">
+            <button class="tab on" id="t-chart" onclick="setTab('chart',this)">
+              <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 4 L13.5 12 L12 20 L10.5 12 Z" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/></svg>
+              Chart
+            </button>
+            <button class="tab" id="t-openwater" onclick="setTab('openwater',this)">
+              <svg viewBox="0 0 24 24"><path d="M3 8 Q7 5 12 8 T21 8"/><path d="M3 13 Q7 10 12 13 T21 13"/><path d="M3 18 Q7 15 12 18 T21 18"/></svg>
+              Open Water
+            </button>
+            <button class="tab" id="t-profile" onclick="setTab('profile',this)">
+              <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M5 20 Q5 14 12 14 Q19 14 19 20"/></svg>
+              Profile
+            </button>
+          </div>
+        </div>
+
+        <!-- ============ ONBOARDING MODE ============ -->
+        <div class="mode" id="mode-onboarding">
+          <div class="ob" style="flex:1">
+            <div class="dots-prog" id="ob-dots"><i class="on"></i><i></i><i></i><i></i></div>
+            <div class="ob-top" id="ob-content"></div>
+            <div class="ob-actions">
+              <button class="btn-primary" id="ob-next" onclick="obNext()">Get started</button>
+              <button class="btn-ghost" onclick="obReset()">Restart flow</button>
+            </div>
+          </div>
+          <div class="perm-sheet" id="permSheet"><div class="perm-card" id="permCard"></div></div>
+        </div>
+
+        <!-- ============ WAKE ALERT MODE ============ -->
+        <div class="mode" id="mode-wakealert">
+          <div class="lockscreen">
+            <div class="ls-time"><div class="clock">9:41</div><div class="date">Wednesday, June 11</div></div>
+            <div class="notif" onclick="this.querySelector('.expand').style.display='block';this.querySelector('.collapse-hint').style.display='none'">
+              <div class="app-ico"><svg width="21" height="21" viewBox="0 0 100 100" fill="none"><path d="M50 6 L57 50 L50 94 L43 50 Z" fill="#5BE6CB"/><path d="M6 50 L50 43 L94 50 L50 57 Z" fill="#2C9A85"/><circle cx="50" cy="50" r="4" fill="#E9F1F6"/></svg></div>
+              <div class="body">
+                <div class="head-row"><span class="app-name">SPIN</span><span class="time">now</span></div>
+                <div class="title">You just crossed a wake 🌊</div>
+                <div class="msg">You and <b>Priya</b> were both at <b>Stardust Video &amp; Coffee</b> — you missed each other by <b>7 minutes</b>.</div>
+                <div class="expand" style="display:none;margin-top:10px">
+                  <div class="msg" style="margin-top:0">She was there 8:55–9:18 AM. You arrived 9:14. Closest you've come this month.</div>
+                  <div style="display:flex;gap:8px;margin-top:11px">
+                    <button class="btn-primary" style="font-size:13px;padding:10px" onclick="event.stopPropagation()">Wave at Priya</button>
+                    <button class="btn-primary" style="font-size:13px;padding:10px;background:var(--ink-3);color:var(--phosphor)" onclick="event.stopPropagation()">View on chart</button>
+                  </div>
+                </div>
+                <div class="collapse-hint" style="font-size:11px;color:var(--fog-dim);margin-top:6px">Tap to expand</div>
+              </div>
+            </div>
+            <div class="ls-hint"><span class="swipe">⌃</span>swipe up to open SPIN</div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- TIE OFF MODAL -->
+      <div class="perm-sheet" id="modal" style="align-items:center;justify-content:center;padding:24px" onclick="if(event.target===this)this.classList.remove('open')">
+        <div style="width:100%;border:1px solid var(--hull);border-radius:16px;background:var(--ink-2);padding:24px;text-align:center">
+          <h3 style="font-family:'Fraunces',serif;font-weight:500;font-size:20px;margin-bottom:7px">Tie off a crew member</h3>
+          <p style="color:var(--fog);font-size:13px;margin-bottom:16px">Share your code in person, or send the link.</p>
+          <div style="border:1px dashed var(--hull);border-radius:10px;padding:13px;margin-bottom:13px;background:var(--abyss)">
+            <div style="font-size:9px;letter-spacing:.24em;text-transform:uppercase;color:var(--fog-dim);margin-bottom:6px">Your crew code</div>
+            <div class="mono" style="font-size:21px;letter-spacing:.18em;color:var(--phosphor)">SAIL-7K2</div>
+          </div>
+          <button class="btn-primary" id="copyBtn" onclick="copyLink(this)" style="margin-bottom:8px">Copy invite link</button>
+          <button class="btn-ghost" onclick="document.getElementById('modal').classList.remove('open')">Maybe later</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="caption" id="caption"></div>
+</div>
+
+<script>
+const captions = {
+  app: '<b style="color:#E9F1F6">The app.</b> Bottom tabs switch between <b style="color:#E9F1F6">Chart</b> (your live map + wakes + crew), <b style="color:#E9F1F6">Open Water</b> (paid discovery), and <b style="color:#E9F1F6">Profile</b>. The map zooms and pans; tap a wake to fly to it. On Profile, edit your bio and flip the privacy toggles.',
+  onboarding: '<b style="color:#E9F1F6">Onboarding.</b> The pre-app flow: the hook, the two permission asks (framed around trust), then you\'re in. Tap "Get started" to walk through the iOS-style permission sheets.',
+  wakealert: '<b style="color:#E9F1F6">Wake alert.</b> The lock-screen push the whole product exists to deliver. Tap the notification to expand it into actions.'
+};
+
+function setMode(mode, btn){
+  document.querySelectorAll('.mode').forEach(m=>m.classList.remove('active'));
+  document.getElementById('mode-'+mode).classList.add('active');
+  document.querySelectorAll('.selector button').forEach(b=>b.classList.remove('on'));
+  btn.classList.add('on');
+  document.getElementById('caption').innerHTML = captions[mode];
+  if(mode==='app' && window._map){ setTimeout(()=>window._map.invalidateSize(), 120); }
+}
+
+function setTab(tab, btn){
+  document.querySelectorAll('.tabview').forEach(v=>v.classList.remove('active'));
+  document.getElementById('tab-'+tab).classList.add('active');
+  document.querySelectorAll('.tab').forEach(b=>b.classList.remove('on'));
+  btn.classList.add('on');
+  document.getElementById('app-scroll').scrollTop = 0;
+  if(tab==='chart' && window._map){ setTimeout(()=>window._map.invalidateSize(), 120); }
+}
+
+// ---- MAP ----
+const crossings = [
+  { lat:28.5405, lng:-81.3787, name:"Stardust Video & Coffee",    person:"Priya K.",  gap:"7 min",  close:true,  note:"Wed 9:14 AM" },
+  { lat:28.5484, lng:-81.3654, name:"Lake Eola Park",             person:"Sarah M.",  gap:"19 min", close:false, note:"Sat 8:40 AM" },
+  { lat:28.5383, lng:-81.3792, name:"The Hammered Lamb",          person:"Devon R.",  gap:"31 min", close:false, note:"Fri 9:50 PM" },
+  { lat:28.5583, lng:-81.3441, name:"Baldwin Park Market",        person:"Marcus T.", gap:"22 min", close:false, note:"Sun 10:15 AM" }
+];
+const YOU = { lat:28.5402, lng:-81.3772 };
+
+window.addEventListener('load', function(){
+  var map = L.map('map', { center:[28.5450,-81.3680], zoom:14, zoomControl:true });
+  window._map = map;
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution:'&copy; OpenStreetMap &copy; CARTO', subdomains:'abcd', maxZoom:19
+  }).addTo(map);
+
+  crossings.forEach(function(c){
+    var color = c.close ? '#F2B65E' : '#5BE6CB';
+    L.polyline([[YOU.lat,YOU.lng],[c.lat,c.lng]], {color:color,weight:1.8,opacity:.5,dashArray:'5 8'}).addTo(map);
+    var ring = c.close ? '#6B5530' : '#2C9A85';
+    var icon = L.divIcon({className:'',html:'<div style="width:16px;height:16px;border-radius:50%;background:'+color+';border:2px solid '+ring+';box-shadow:0 0 9px '+color+'55"></div>',iconSize:[16,16],iconAnchor:[8,8]});
+    L.marker([c.lat,c.lng],{icon:icon}).addTo(map).bindPopup(
+      '<div class="popup-name">'+c.name+'</div><div class="popup-miss"><b>'+c.person+'</b> · '+c.note+'</div><span class="popup-gap '+(c.close?'close':'far')+'">missed by '+c.gap+'</span>',
+      {className:'spin-popup',offset:[0,-6]});
+  });
+  var youIcon = L.divIcon({className:'',html:'<div style="width:13px;height:13px;border-radius:50%;background:#E9F1F6;border:2px solid #88A0B2;box-shadow:0 0 0 6px rgba(233,241,246,.16)"></div>',iconSize:[13,13],iconAnchor:[6,6]});
+  L.marker([YOU.lat,YOU.lng],{icon:youIcon}).addTo(map).bindPopup('<div class="popup-name">You are here</div>',{className:'spin-popup'});
+});
+
+window.flyTo = function(lat,lng){
+  if(!window._map) return;
+  window._map.flyTo([lat,lng],16,{duration:1.1});
+  setTimeout(function(){
+    window._map.eachLayer(function(layer){
+      if(layer instanceof L.Marker){
+        var p = layer.getLatLng();
+        if(Math.abs(p.lat-lat)<0.0002 && Math.abs(p.lng-lng)<0.0002) layer.openPopup();
+      }
+    });
+  },1200);
+};
+
+// ---- crew add ----
+var crewN = 5;
+window.addCrew = function(btn,name,initial,color){
+  btn.textContent='Tied off ✓'; btn.classList.add('added'); btn.disabled=true;
+  crewN++; document.getElementById('crew-count').textContent = crewN+' tied off';
+  var row=document.getElementById('crew-row'); var tie=row.querySelector('.tieoff-btn');
+  var m=document.createElement('div'); m.className='crew-mem';
+  m.innerHTML='<div class="av" style="background:'+color+';width:46px;height:46px">'+initial+'</div><span>'+name+'</span>';
+  row.insertBefore(m,tie);
+};
+window.hail = function(btn){ btn.textContent='✓ Hail sent — waiting'; btn.classList.add('sent'); btn.disabled=true; };
+window.copyLink = function(btn){ try{navigator.clipboard.writeText('https://spin.app/tieoff/SAIL-7K2');}catch(e){} btn.textContent='Link copied ✓'; setTimeout(()=>btn.textContent='Copy invite link',2000); };
+
+// ---- bio editing ----
+window.openBio = function(){
+  var cur = document.getElementById('bioText').textContent;
+  document.getElementById('bioInput').value = cur;
+  updateCount();
+  document.getElementById('bioDisplay').style.display='none';
+  document.getElementById('bioEditor').classList.add('open');
+  document.getElementById('bioInput').focus();
+};
+window.cancelBio = function(){
+  document.getElementById('bioEditor').classList.remove('open');
+  document.getElementById('bioDisplay').style.display='block';
+};
+window.saveBio = function(){
+  var val = document.getElementById('bioInput').value.trim();
+  if(val) document.getElementById('bioText').textContent = val;
+  cancelBio();
+};
+window.updateCount = function(){ document.getElementById('bioCount').textContent = document.getElementById('bioInput').value.length; };
+
+// ---- onboarding ----
+let obStep=0;
+const artSVG={
+  rose:'<svg width="160" height="160" viewBox="0 0 170 170" fill="none"><circle cx="85" cy="85" r="80" stroke="#1A3650"/><circle cx="85" cy="85" r="58" stroke="#163150"/><path d="M20 50 C 70 70, 90 90, 150 75" stroke="#5BE6CB" stroke-width="1.6" stroke-dasharray="5 7" opacity=".7"/><path d="M30 130 C 80 110, 110 95, 150 110" stroke="#5BE6CB" stroke-width="1.6" stroke-dasharray="5 7" opacity=".7"/><circle cx="105" cy="83" r="18" fill="#5BE6CB" opacity=".18"/><circle cx="105" cy="83" r="6" fill="#5BE6CB"/><circle cx="85" cy="85" r="3.5" fill="#E9F1F6"/></svg>',
+  loc:'<svg width="140" height="160" viewBox="0 0 150 170" fill="none"><circle cx="75" cy="70" r="58" stroke="#1A3650"/><path d="M75 30 C 95 30, 108 46, 108 66 C 108 92, 75 128, 75 128 C 75 128, 42 92, 42 66 C 42 46, 55 30, 75 30 Z" stroke="#5BE6CB" stroke-width="2" fill="#5be6cb14"/><circle cx="75" cy="64" r="13" fill="#5BE6CB" opacity=".3"/><circle cx="75" cy="64" r="6" fill="#5BE6CB"/></svg>',
+  contacts:'<svg width="160" height="150" viewBox="0 0 170 160" fill="none"><circle cx="55" cy="60" r="22" stroke="#5BE6CB" stroke-width="2" fill="#5be6cb14"/><circle cx="55" cy="52" r="8" fill="#5BE6CB"/><path d="M40 78 C 40 66, 70 66, 70 78" stroke="#5BE6CB" stroke-width="2" fill="none"/><circle cx="115" cy="95" r="22" stroke="#2C9A85" stroke-width="2" fill="#2c9a8514"/><circle cx="115" cy="87" r="8" fill="#2C9A85"/><path d="M100 113 C 100 101, 130 101, 130 113" stroke="#2C9A85" stroke-width="2" fill="none"/><path d="M70 65 L100 90" stroke="#234763" stroke-dasharray="4 5"/></svg>',
+  done:'<svg width="140" height="140" viewBox="0 0 150 150" fill="none"><circle cx="75" cy="75" r="60" stroke="#5BE6CB" stroke-width="2" fill="#5be6cb10"/><path d="M52 76 L68 92 L100 56" stroke="#5BE6CB" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+};
+const obSteps=[
+  {art:'rose',h:'Some people you<br>pass <em>every day</em>.',p:'SPIN remembers where you\'ve been and gently tells you when you crossed paths with someone you know — and never noticed.',btn:'Get started',sheet:null},
+  {art:'loc',h:'First, your <em>course</em>.',p:'SPIN needs your location in the background to spot crossings. It logs quietly and only ever compares your path against people you\'ve tied off.',btn:'Allow location',sheet:'location'},
+  {art:'contacts',h:'Now, your <em>crew</em>.',p:'See which contacts are already aboard. Numbers are scrambled before they leave your phone — we never store the real ones.',btn:'Find my crew',sheet:'contacts'},
+  {art:'done',h:'You\'re <em>underway</em>.',p:'We found 2 people from your contacts already on SPIN. The next time your paths cross, you\'ll know.',btn:'Enter SPIN',sheet:null}
+];
+const permSheets={
+  location:{title:'"SPIN" Would Like to Use Your Location',body:'Used to detect when you cross paths with your Crew. SPIN compares your route only against people you\'ve added.',preview:true,opts:['Allow While Using App','Allow Once','Don\'t Allow']},
+  contacts:{title:'"SPIN" Would Like Access to Your Contacts',body:'Phone numbers are hashed on your device to find friends already using SPIN. Raw numbers are never uploaded.',preview:false,opts:['Allow Full Access','Select Contacts…','Don\'t Allow']}
+};
+function renderOb(){
+  var s=obSteps[obStep];
+  document.getElementById('ob-content').innerHTML='<div class="ob-art">'+artSVG[s.art]+'</div><h2>'+s.h+'</h2><p class="lead">'+s.p+'</p>';
+  document.getElementById('ob-next').textContent=s.btn;
+  document.querySelectorAll('#ob-dots i').forEach((d,i)=>d.classList.toggle('on',i===obStep));
+}
+window.obNext=function(){ var s=obSteps[obStep]; if(s.sheet) openPermSheet(s.sheet); else advanceOb(); };
+function advanceOb(){ if(obStep<obSteps.length-1){obStep++;renderOb();} else { obReset(); document.querySelector('.selector button').click(); } }
+function openPermSheet(which){
+  var p=permSheets[which];
+  document.getElementById('permCard').innerHTML='<h4>'+p.title+'</h4><p>'+p.body+'</p>'+(p.preview?'<div class="map-prev">▒ live map preview ▒</div>':'')+'<div style="margin-top:10px"><div class="perm-opt bold" onclick="closePermSheet()">'+p.opts[0]+'</div><div class="perm-opt" onclick="closePermSheet()">'+p.opts[1]+'</div><div class="perm-opt" onclick="closePermSheet()">'+p.opts[2]+'</div></div>';
+  document.getElementById('permSheet').classList.add('open');
+}
+window.closePermSheet=function(){ document.getElementById('permSheet').classList.remove('open'); setTimeout(advanceOb,200); };
+window.obReset=function(){ obStep=0; renderOb(); document.getElementById('permSheet').classList.remove('open'); };
+renderOb();
+
+document.getElementById('caption').innerHTML = captions.app;
+</script>
+</body>
+</html>
