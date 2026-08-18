@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Extrarandom — a shelf of unrelated things</title>
+<meta name="description" content="A small collection of tools, games, and experiments. Unrelated on purpose.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Petrona:ital,wght@0,400;0,500;0,600;1,400&family=Karla:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+<script>
+/* ==========================================================================
+   EDIT THIS LIST TO ADD, REMOVE, OR CHANGE A TOOL.
+   Everything on the page builds itself from what's below — you never need
+   to touch the design code further down.
+
+   Each entry has five parts:
+     name    — what it's called
+     tag     — the kind of thing it is (shows as a small label, and is
+               filterable by "Type" up top)
+     file    — the .html filename, exactly as uploaded to GitHub
+     desc    — a sentence or two about it
+     credits — optional. A list of names who helped build it, shown as
+               "Design credits" under the description, and filterable by
+               "Creator" up top. Leave as an empty list [] if it was just
+               you — no credits line will show.
+
+   To add one: copy a block, paste it, change the lines. Keep the commas.
+   To hide one without deleting it: set file to ""  →  it shows as "In progress".
+   ========================================================================== */
+
+const TOOLS = [
+
+  {
+    name: "The Economic Machine",
+    tag:  "Simulation",
+    file: "economic-machine.html",
+    desc: "Take the controls a government and central bank actually have — interest rates, taxes, spending — and run the clock on a whole economy. Every lever you pull helps someone and costs someone else, and the panel on the right shows you exactly who.",
+    credits: ["GZ"]
+  },
+
+  {
+    name: "Sunroom Collective",
+    tag:  "Game",
+    file: "sunroom-collective.html",
+    desc: "Whack-a-mole, but the moles are in a band. Tap each bandmate as they pop up from behind the amps, faster and faster, until the tempo finally gets away from you.",
+    credits: ["GZ"]
+  },
+
+  {
+    name: "SPIN",
+    tag:  "App",
+    file: "spin.html",
+    desc: "Ships Passing In the Night. For the moment you didn't say anything and spent the rest of the day thinking about it — post the near-miss, and find out whether the other person was looking back.",
+    credits: ["GZ", "NJ"]
+  },
+
+  {
+    name: "Sober Service Animal App",
+    tag:  "App",
+    file: "alongside-alc-app.html",
+    desc: "An app to keep you on track. If chips aren't your style, this animal will help you track your sober journey with hearts and wholesome motivation.",
+    credits: ["GZ", "NJ"]
+  },  
+
+     {
+    name: "Volkert Dive Game",
+    tag:  "Game",
+    file: "volkert-deep-inspection.html",
+    desc: "Lmao",
+    credits: ["GZ", "RP", "AT"]
+  },  
+   
+];
+</script>
+
+<style>
+  :root{
+    --paper:      #EFE7D4;
+    --paper-deep: #E4D9C0;
+    --card:       #F7F1E2;
+    --bark:       #2B271F;
+    --bark-soft:  #5C5445;
+    --moss:       #46583A;
+    --sage:       #7E9159;
+    --clay:       #8C5E3B;
+    --rule:       #CDBE9E;
+
+    --display: 'Petrona', Georgia, serif;
+    --body:    'Karla', system-ui, sans-serif;
+    --util:    'Space Mono', monospace;
+  }
+
+  *{ box-sizing:border-box; }
+
+  html{ -webkit-text-size-adjust:100%; }
+
+  body{
+    margin:0;
+    background-color:var(--paper);
+    background-image:
+      radial-gradient(circle at 12% 18%, rgba(126,145,89,.10), transparent 42%),
+      radial-gradient(circle at 88% 8%,  rgba(140,94,59,.08),  transparent 38%);
+    color:var(--bark);
+    font-family:var(--body);
+    font-size:17px;
+    line-height:1.6;
+  }
+
+  ::selection{ background:var(--sage); color:#FBF7EC; }
+
+  a{ color:inherit; }
+
+  .shell{
+    max-width:1080px;
+    margin:0 auto;
+    padding:clamp(36px,7vw,84px) clamp(20px,5vw,40px) 72px;
+  }
+
+  /* ---------- masthead ---------- */
+
+  .masthead{
+    border-bottom:1px solid var(--rule);
+    padding-bottom:30px;
+    margin-bottom:44px;
+  }
+
+  .eyebrow{
+    font-family:var(--util);
+    font-size:11px;
+    letter-spacing:.22em;
+    text-transform:uppercase;
+    color:var(--clay);
+    margin:0 0 18px;
+  }
+
+  .wordmark{
+    font-family:var(--display);
+    font-weight:500;
+    font-size:clamp(46px,9.5vw,92px);
+    line-height:.94;
+    letter-spacing:-.022em;
+    margin:0;
+    color:var(--moss);
+  }
+  .wordmark .dot{ color:var(--clay); }
+
+  .thesis{
+    font-family:var(--display);
+    font-style:italic;
+    font-size:clamp(18px,2.4vw,23px);
+    line-height:1.45;
+    color:var(--bark-soft);
+    max-width:34ch;
+    margin:20px 0 0;
+  }
+
+  .masthead-foot{
+    display:flex;
+    flex-wrap:wrap;
+    align-items:center;
+    justify-content:space-between;
+    gap:18px;
+    margin-top:30px;
+  }
+
+  .tally{
+    font-family:var(--util);
+    font-size:11.5px;
+    letter-spacing:.13em;
+    text-transform:uppercase;
+    color:var(--bark-soft);
+  }
+
+  .shuffle{
+    font-family:var(--util);
+    font-size:12px;
+    letter-spacing:.1em;
+    text-transform:uppercase;
+    color:var(--paper);
+    background:var(--moss);
+    border:none;
+    border-radius:999px;
+    padding:12px 22px;
+    cursor:pointer;
+    transition:background .18s ease, transform .18s ease;
+  }
+  .shuffle:hover{ background:var(--sage); transform:translateY(-1px); }
+  .shuffle:active{ transform:translateY(0); }
+
+  /* ---------- filter bar ---------- */
+
+  .filters{
+    display:flex;
+    flex-wrap:wrap;
+    align-items:center;
+    gap:14px;
+    margin-top:26px;
+  }
+
+  .filter-label{
+    font-family:var(--util);
+    font-size:10.5px;
+    letter-spacing:.14em;
+    text-transform:uppercase;
+    color:var(--bark-soft);
+  }
+
+  .filters select{
+    appearance:none;
+    -webkit-appearance:none;
+    font-family:var(--util);
+    font-size:12px;
+    letter-spacing:.04em;
+    color:var(--bark);
+    background:var(--card) url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="%235C5445"><path d="M5.5 7.5L10 12l4.5-4.5"/></svg>') no-repeat right 12px center;
+    background-size:12px;
+    border:1px solid var(--rule);
+    border-radius:999px;
+    padding:9px 34px 9px 16px;
+    cursor:pointer;
+    transition:border-color .18s ease;
+  }
+  .filters select:hover,
+  .filters select:focus{
+    border-color:var(--moss);
+    outline:none;
+  }
+
+  .filters .clear{
+    font-family:var(--util);
+    font-size:11px;
+    letter-spacing:.1em;
+    text-transform:uppercase;
+    color:var(--clay);
+    background:none;
+    border:none;
+    cursor:pointer;
+    padding:6px 4px;
+    text-decoration:underline;
+    text-underline-offset:3px;
+    opacity:0;
+    pointer-events:none;
+    transition:opacity .15s ease;
+  }
+  .filters .clear.visible{
+    opacity:1;
+    pointer-events:auto;
+  }
+
+  .no-results{
+    font-family:var(--display);
+    font-style:italic;
+    font-size:18px;
+    color:var(--bark-soft);
+    padding:40px 0;
+    text-align:center;
+    grid-column:1 / -1;
+  }
+
+  /* ---------- specimen grid ---------- */
+
+  .shelf{
+    display:grid;
+    grid-template-columns:repeat(auto-fill, minmax(300px, 1fr));
+    gap:22px;
+    list-style:none;
+    margin:0;
+    padding:0;
+  }
+
+  .specimen{
+    display:flex;
+    flex-direction:column;
+    background:var(--card);
+    border:1px solid var(--rule);
+    border-radius:3px;
+    padding:24px 24px 22px;
+    text-decoration:none;
+    min-height:250px;
+    position:relative;
+    transition:border-color .2s ease, transform .2s ease, box-shadow .2s ease;
+    opacity:0;
+    animation:settle .5s ease forwards;
+  }
+  .specimen:hover{
+    border-color:var(--moss);
+    transform:translateY(-3px);
+    box-shadow:0 10px 26px -18px rgba(43,39,31,.55);
+  }
+  .specimen:focus-visible{
+    outline:2px solid var(--clay);
+    outline-offset:3px;
+  }
+
+  @keyframes settle{
+    from{ opacity:0; transform:translateY(10px); }
+    to  { opacity:1; transform:translateY(0); }
+  }
+
+  .specimen .tag{
+    font-family:var(--util);
+    font-size:10px;
+    letter-spacing:.2em;
+    text-transform:uppercase;
+    color:var(--clay);
+    padding-bottom:14px;
+    margin-bottom:16px;
+    border-bottom:1px solid var(--rule);
+  }
+
+  .specimen .name{
+    font-family:var(--display);
+    font-weight:600;
+    font-size:27px;
+    line-height:1.14;
+    letter-spacing:-.012em;
+    color:var(--bark);
+    margin:0 0 10px;
+  }
+
+  .specimen .desc{
+    font-size:14.5px;
+    line-height:1.62;
+    color:var(--bark-soft);
+    margin:0 0 14px;
+  }
+
+  .specimen .credits{
+    font-family:var(--util);
+    font-size:11px;
+    letter-spacing:.04em;
+    color:var(--sage);
+    margin:0 0 20px;
+  }
+  .specimen .credits b{
+    font-weight:700;
+    color:var(--bark-soft);
+  }
+
+  .specimen .go{
+    margin-top:auto;
+    font-family:var(--util);
+    font-size:11.5px;
+    letter-spacing:.12em;
+    text-transform:uppercase;
+    color:var(--moss);
+    display:flex;
+    align-items:center;
+    gap:9px;
+  }
+  .specimen .go .arrow{ transition:transform .2s ease; }
+  .specimen:hover .go .arrow{ transform:translateX(5px); }
+
+  /* unreleased state — triggered by an empty file value */
+  .specimen.pending{
+    background:transparent;
+    border-style:dashed;
+    cursor:default;
+  }
+  .specimen.pending:hover{
+    transform:none;
+    box-shadow:none;
+    border-color:var(--rule);
+  }
+  .specimen.pending .name,
+  .specimen.pending .desc{ color:var(--bark-soft); opacity:.72; }
+  .specimen.pending .go{ color:var(--bark-soft); opacity:.72; }
+
+  /* ---------- footer ---------- */
+
+  .colophon{
+    margin-top:56px;
+    padding-top:22px;
+    border-top:1px solid var(--rule);
+    font-family:var(--util);
+    font-size:11px;
+    letter-spacing:.1em;
+    text-transform:uppercase;
+    color:var(--bark-soft);
+    display:flex;
+    flex-wrap:wrap;
+    gap:8px 18px;
+  }
+
+  li.filtered-out{ display:none; }
+
+  @media (max-width:560px){
+    .shelf{ grid-template-columns:1fr; }
+    .specimen{ min-height:0; }
+    .filters{ gap:10px; }
+    .filters select{ flex:1; min-width:130px; }
+  }
+
+  @media (prefers-reduced-motion: reduce){
+    *{ animation:none !important; transition:none !important; }
+    .specimen{ opacity:1; }
+  }
+</style>
+</head>
+<body>
+
+<div class="shell">
+
+  <header class="masthead">
+    <p class="eyebrow">Extrarandom<span style="color:var(--rule)"> · </span>est. 2026</p>
+    <h1 class="wordmark">extrarandom<span class="dot">.</span></h1>
+    <p class="thesis">A shelf of things I built that have nothing to do with each other.</p>
+
+    <div class="masthead-foot">
+      <span class="tally" id="tally"></span>
+      <button class="shuffle" id="shuffle" type="button">Surprise me</button>
+    </div>
+
+    <div class="filters">
+      <span class="filter-label">Filter</span>
+      <select id="filter-type">
+        <option value="">All types</option>
+      </select>
+      <select id="filter-creator">
+        <option value="">All creators</option>
+      </select>
+      <button class="clear" id="clear-filters" type="button">Clear</button>
+    </div>
+  </header>
+
+  <main>
+    <ul class="shelf" id="shelf"></ul>
+  </main>
+
+  <footer class="colophon">
+    <span>Built by hand</span>
+    <span>·</span>
+    <span>Nothing here tracks you</span>
+    <span>·</span>
+    <span>extrarandom.com</span>
+  </footer>
+
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  const shelf   = document.getElementById('shelf');
+  const live    = TOOLS.filter(t => t.file);
+  const typeSel = document.getElementById('filter-type');
+  const credSel = document.getElementById('filter-creator');
+  const clearBtn= document.getElementById('clear-filters');
+  const tallyEl = document.getElementById('tally');
+
+  // ---- build the cards ----
+
+  TOOLS.forEach(function(tool, i){
+    const li = document.createElement('li');
+    const isLive = Boolean(tool.file);
+    const credits = Array.isArray(tool.credits) ? tool.credits.filter(Boolean) : [];
+    const el = document.createElement(isLive ? 'a' : 'div');
+
+    el.className = 'specimen' + (isLive ? '' : ' pending');
+    if (isLive) el.href = tool.file;
+    el.style.animationDelay = (i * 70) + 'ms';
+    el.dataset.tag = tool.tag || '';
+    el.dataset.credits = credits.join('|');
+
+    el.innerHTML =
+      '<span class="tag">' + tool.tag + '</span>' +
+      '<h2 class="name">' + tool.name + '</h2>' +
+      '<p class="desc">' + tool.desc + '</p>' +
+      (credits.length
+        ? '<p class="credits"><b>Design credits:</b> ' + credits.join(', ') + '</p>'
+        : '') +
+      '<span class="go">' +
+        (isLive
+          ? 'Open <span class="arrow">&rarr;</span>'
+          : 'In progress') +
+      '</span>';
+
+    li.appendChild(el);
+    shelf.appendChild(li);
+  });
+
+  // ---- build filter dropdowns from whatever's actually in TOOLS ----
+
+  const types    = [...new Set(TOOLS.map(t => t.tag).filter(Boolean))].sort();
+  const creators = [...new Set(TOOLS.flatMap(t => t.credits || []).filter(Boolean))].sort();
+
+  types.forEach(function(t){
+    const opt = document.createElement('option');
+    opt.value = t;
+    opt.textContent = t;
+    typeSel.appendChild(opt);
+  });
+
+  creators.forEach(function(c){
+    const opt = document.createElement('option');
+    opt.value = c;
+    opt.textContent = c;
+    credSel.appendChild(opt);
+  });
+
+  // hide the creator filter entirely if nobody has credits yet
+  if (!creators.length){
+    credSel.style.display = 'none';
+  }
+
+  // ---- filtering ----
+
+  function applyFilters(){
+    const typeVal = typeSel.value;
+    const credVal = credSel.value;
+    let visibleCount = 0;
+
+    document.querySelectorAll('.specimen').forEach(function(card){
+      const matchesType = !typeVal || card.dataset.tag === typeVal;
+      const cardCredits = card.dataset.credits ? card.dataset.credits.split('|') : [];
+      const matchesCred = !credVal || cardCredits.includes(credVal);
+      const show = matchesType && matchesCred;
+
+      card.parentElement.classList.toggle('filtered-out', !show);
+      if (show) visibleCount++;
+    });
+
+    clearBtn.classList.toggle('visible', Boolean(typeVal || credVal));
+
+    tallyEl.textContent = (typeVal || credVal)
+      ? visibleCount + (visibleCount === 1 ? ' match' : ' matches')
+      : live.length + (live.length === 1 ? ' thing' : ' things') + ' to poke at';
+
+    let noResultsEl = shelf.querySelector('.no-results');
+    if (visibleCount === 0){
+      if (!noResultsEl){
+        noResultsEl = document.createElement('li');
+        noResultsEl.className = 'no-results';
+        noResultsEl.textContent = "Nothing matches that combination — try clearing a filter.";
+        shelf.appendChild(noResultsEl);
+      }
+    } else if (noResultsEl){
+      noResultsEl.remove();
+    }
+  }
+
+  typeSel.addEventListener('change', applyFilters);
+  credSel.addEventListener('change', applyFilters);
+  clearBtn.addEventListener('click', function(){
+    typeSel.value = '';
+    credSel.value = '';
+    applyFilters();
+  });
+
+  tallyEl.textContent =
+    live.length + (live.length === 1 ? ' thing' : ' things') + ' to poke at';
+
+  document.getElementById('shuffle').addEventListener('click', function(){
+    if (!live.length) return;
+    const pick = live[Math.floor(Math.random() * live.length)];
+    window.location.href = pick.file;
+  });
+
+})();
+</script>
+
+</body>
+</html>
