@@ -1,0 +1,16 @@
+{
+  "name": "hello-colyseus-server",
+  "version": "1.0.0",
+  "description": "Two-dot Colyseus hello-world -- authoritative state sync demo",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "license": "ISC",
+  "dependencies": {
+    "colyseus": "^0.17.10",
+    "@colyseus/schema": "^4.0.31",
+    "@colyseus/ws-transport": "^0.17.13",
+    "express": "^5.2.1"
+  }
+}
