@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1, user-scalable=no"/>
+<title>Tag</title>
+<style>
+  :root{
+    --paper:#EDEAE3;      /* page */
+    --field:#E3DFD6;      /* playfield */
+    --line:#D3CEC3;       /* field border */
+    --block:#BDB6A8;      /* obstacles */
+    --ink:#4A4740;        /* primary text */
+    --ink-soft:#8A857B;   /* secondary text */
+    --it:#C0564A;         /* the ring */
+    --card:#F5F3EE;
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;margin:0;}
+  body{
+    background:var(--paper);color:var(--ink);
+    font-family:ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif;
+    display:flex;flex-direction:column;align-items:center;
+    padding:18px 14px 24px;gap:14px;
+    -webkit-user-select:none;user-select:none;touch-action:manipulation;
+  }
+  h1{font-size:20px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;margin:0;}
+  .sub{font-size:12.5px;color:var(--ink-soft);margin:0;text-align:center;line-height:1.6;}
+
+  /* ---- name entry ---- */
+  #entry{
+    position:fixed;inset:0;z-index:20;background:var(--paper);
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:16px;padding:24px;text-align:center;
+  }
+  #entry.hidden{display:none;}
+  #entry input{
+    font:inherit;font-size:17px;text-align:center;
+    padding:12px 16px;width:min(260px,80vw);
+    border:1.5px solid var(--line);border-radius:8px;
+    background:var(--card);color:var(--ink);outline:none;
+  }
+  #entry input:focus{border-color:var(--ink-soft);}
+  button.go{
+    font:inherit;font-size:15px;font-weight:600;letter-spacing:.06em;
+    padding:12px 30px;border:none;border-radius:8px;cursor:pointer;
+    background:var(--ink);color:var(--paper);
+  }
+  button.go:active{opacity:.85;}
+
+  /* ---- game ---- */
+  #wrap{width:100%;max-width:620px;display:flex;flex-direction:column;gap:12px;align-items:center;}
+  canvas{
+    width:100%;aspect-ratio:1/1;height:auto;display:block;
+    background:var(--field);border:1.5px solid var(--line);border-radius:6px;
+    touch-action:none;
+  }
+  #board{
+    width:100%;background:var(--card);border:1.5px solid var(--line);
+    border-radius:6px;padding:10px 12px;
+  }
+  #board h2{
+    font-size:10.5px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--ink-soft);margin:0 0 8px;
+  }
+  .row{
+    display:flex;align-items:center;gap:9px;font-size:13.5px;
+    padding:4px 0;border-top:1px solid rgba(0,0,0,.05);
+  }
+  .row:first-of-type{border-top:none;}
+  .dot{width:11px;height:11px;border-radius:50%;flex:0 0 auto;}
+  .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .row.it .nm{color:var(--it);font-weight:600;}
+  .tm{font-variant-numeric:tabular-nums;color:var(--ink-soft);font-size:12.5px;}
+  .tag{font-size:9.5px;letter-spacing:.1em;color:var(--it);border:1px solid var(--it);
+    border-radius:3px;padding:1px 4px;}
+  #status{font-size:12px;color:var(--ink-soft);min-height:16px;text-align:center;}
+  #status.err{color:var(--it);}
+</style>
+</head>
+<body>
+
+<div id="entry">
+  <h1>Tag</h1>
+  <p class="sub">Up to 8 players. Whoever is <strong style="color:var(--it)">it</strong> chases.<br>
+     Touch someone to pass it on.</p>
+  <input id="nameInput" maxlength="12" placeholder="your name" autocomplete="off"/>
+  <button class="go" id="joinBtn">Join game</button>
+  <p class="sub" id="entryNote"></p>
+</div>
+
+<h1>Tag</h1>
+<p class="sub">Tap the field to move, or use WASD / arrow keys.</p>
+
+<div id="wrap">
+  <canvas id="cv" width="900" height="900"></canvas>
+  <div id="board">
+    <h2>Time spent as “it”</h2>
+    <div id="rows"></div>
+  </div>
+  <div id="status">connecting…</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@colyseus/sdk@0.17.43/dist/colyseus.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  /* ---------- where to connect ----------
+     Blank = same host that served this page. Opened straight from disk,
+     it falls back to the deployed server.                              */
+  var SERVER_URL = "";
+  var FALLBACK   = "wss://extrarandom-site.onrender.com";
+
+  function endpoint() {
+    if (SERVER_URL) return SERVER_URL;
+    if (location.protocol === "http:" || location.protocol === "https:") {
+      return (location.protocol === "https:" ? "wss://" : "ws://") + location.host;
+    }
+    return FALLBACK;
+  }
+
+  var ARENA = 900, PLAYER_R = 18;
+
+  /* Obstacles are mirrored from the server purely for drawing. The
+     server remains the authority for collision -- this is only paint. */
+  var OBSTACLES = [
+    { type:"circle", x:450, y:450, r:62 },
+    { type:"circle", x:205, y:205, r:40 },
+    { type:"circle", x:695, y:205, r:40 },
+    { type:"circle", x:205, y:695, r:40 },
+    { type:"circle", x:695, y:695, r:40 },
+    { type:"rect", x:405, y:120, w:90, h:26 },
+    { type:"rect", x:405, y:754, w:90, h:26 },
+    { type:"rect", x:120, y:405, w:26, h:90 },
+    { type:"rect", x:754, y:405, w:26, h:90 }
+  ];
+
+  var cv = document.getElementById("cv");
+  var ctx = cv.getContext("2d");
+  var statusEl = document.getElementById("status");
+  var rowsEl = document.getElementById("rows");
+  var entryEl = document.getElementById("entry");
+
+  var room = null, myId = null;
+  var renderPos = {};          // sessionId -> {x,y} smoothed draw position
+  var SMOOTH = 22;
+  var lastT = null;
+  var myTarget = null;
+
+  function setStatus(msg, isErr) {
+    statusEl.textContent = msg;
+    statusEl.className = isErr ? "err" : "";
+  }
+  window.addEventListener("error", function (e) { setStatus("Error: " + e.message, true); });
+  window.addEventListener("unhandledrejection", function (e) {
+    setStatus("Error: " + ((e.reason && e.reason.message) || e.reason), true);
+  });
+
+  /* ---------------- join ---------------- */
+  var nameInput = document.getElementById("nameInput");
+  var joinBtn = document.getElementById("joinBtn");
+
+  try {
+    var saved = localStorage.getItem("tagName");
+    if (saved) nameInput.value = saved;
+  } catch (e) { /* private mode -- fine */ }
+
+  function join() {
+    var name = (nameInput.value || "").trim();
+    if (!name) { nameInput.focus(); return; }
+    try { localStorage.setItem("tagName", name); } catch (e) {}
+    joinBtn.disabled = true;
+    document.getElementById("entryNote").textContent = "connecting…";
+
+    var client = new Colyseus.Client(endpoint());
+    client.joinOrCreate("tag", { name: name }).then(function (r) {
+      room = r;
+      myId = r.sessionId;
+      entryEl.classList.add("hidden");
+      setStatus("connected");
+
+      var $ = Colyseus.getStateCallbacks(r);
+      $(r.state).players.onAdd(function (p, id) {
+        renderPos[id] = { x: p.x, y: p.y };   // no slide-in from 0,0
+      });
+      $(r.state).players.onRemove(function (p, id) { delete renderPos[id]; });
+
+      r.onLeave(function () { setStatus("disconnected — refresh to rejoin", true); });
+    }).catch(function (err) {
+      joinBtn.disabled = false;
+      document.getElementById("entryNote").textContent =
+        "Could not connect: " + (err && err.message ? err.message : err);
+    });
+  }
+  joinBtn.addEventListener("click", join);
+  nameInput.addEventListener("keydown", function (e) { if (e.key === "Enter") join(); });
+
+  /* ---------------- input ---------------- */
+  function canvasPoint(clientX, clientY) {
+    var b = cv.getBoundingClientRect();
+    return {
+      x: (clientX - b.left) * (ARENA / b.width),
+      y: (clientY - b.top) * (ARENA / b.height)
+    };
+  }
+  function sendTarget(clientX, clientY) {
+    if (!room) return;
+    var p = canvasPoint(clientX, clientY);
+    myTarget = { x: p.x, y: p.y, t: Date.now() };
+    room.send("target", p);
+  }
+  cv.addEventListener("pointerdown", function (e) { e.preventDefault(); sendTarget(e.clientX, e.clientY); });
+  cv.addEventListener("pointermove", function (e) {
+    if (e.buttons > 0 || e.pressure > 0) sendTarget(e.clientX, e.clientY);
+  });
+
+  var keys = {};
+  window.addEventListener("keydown", function (e) {
+    var k = e.key.toLowerCase();
+    keys[k] = true;
+    if (["arrowup","arrowdown","arrowleft","arrowright"," "].indexOf(k) >= 0) e.preventDefault();
+  });
+  window.addEventListener("keyup", function (e) { keys[e.key.toLowerCase()] = false; });
+
+  var wasMoving = false;
+  setInterval(function () {
+    if (!room) return;
+    var x = 0, y = 0;
+    if (keys["w"] || keys["arrowup"]) y -= 1;
+    if (keys["s"] || keys["arrowdown"]) y += 1;
+    if (keys["a"] || keys["arrowleft"]) x -= 1;
+    if (keys["d"] || keys["arrowright"]) x += 1;
+    var moving = (x !== 0 || y !== 0);
+    // stay quiet when idle so a tap destination isn't cancelled instantly
+    if (moving || wasMoving) {
+      room.send("move", { x: x, y: y });
+      if (moving) myTarget = null;
+    }
+    wasMoving = moving;
+  }, 1000 / 30);
+
+  /* ---------------- drawing ---------------- */
+  function drawField() {
+    ctx.clearRect(0, 0, ARENA, ARENA);
+
+    // subtle grid, low contrast so it reads as texture not detail
+    ctx.strokeStyle = "rgba(74,71,64,.05)";
+    ctx.lineWidth = 1;
+    for (var g = 150; g < ARENA; g += 150) {
+      ctx.beginPath(); ctx.moveTo(g, 0); ctx.lineTo(g, ARENA); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, g); ctx.lineTo(ARENA, g); ctx.stroke();
+    }
+
+    ctx.fillStyle = "#BDB6A8";
+    for (var i = 0; i < OBSTACLES.length; i++) {
+      var o = OBSTACLES[i];
+      ctx.beginPath();
+      if (o.type === "circle") {
+        ctx.arc(o.x, o.y, o.r, 0, Math.PI * 2);
+      } else {
+        var r = 5, x = o.x - o.w / 2, y = o.y - o.h / 2;
+        ctx.moveTo(x + r, y);
+        ctx.arcTo(x + o.w, y, x + o.w, y + o.h, r);
+        ctx.arcTo(x + o.w, y + o.h, x, y + o.h, r);
+        ctx.arcTo(x, y + o.h, x, y, r);
+        ctx.arcTo(x, y, x + o.w, y, r);
+      }
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+
+  function draw() {
+    drawField();
+    if (!room || !room.state || !room.state.players) return;
+
+    if (myTarget) {
+      var age = (Date.now() - myTarget.t) / 1000;
+      if (age < 0.9) {
+        ctx.globalAlpha = 1 - age / 0.9;
+        ctx.strokeStyle = "#8A857B";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(myTarget.x, myTarget.y, 8 + age * 22, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      } else myTarget = null;
+    }
+
+    room.state.players.forEach(function (p, id) {
+      var r = renderPos[id] || { x: p.x, y: p.y };
+
+      // soft contact shadow keeps the flat palette from looking sterile
+      ctx.fillStyle = "rgba(74,71,64,.10)";
+      ctx.beginPath();
+      ctx.ellipse(r.x, r.y + PLAYER_R * 0.75, PLAYER_R * 0.85, PLAYER_R * 0.32, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      if (p.isIt) {
+        // dimmed while immune, so you can see when they can actually tag
+        ctx.globalAlpha = p.immunity > 0 ? 0.35 : 1;
+        ctx.beginPath();
+        ctx.arc(r.x, r.y, PLAYER_R + 7, 0, Math.PI * 2);
+        ctx.lineWidth = 3.5;
+        ctx.strokeStyle = "#C0564A";
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+
+      ctx.beginPath();
+      ctx.arc(r.x, r.y, PLAYER_R, 0, Math.PI * 2);
+      ctx.fillStyle = p.color;
+      ctx.fill();
+
+      if (id === myId) {                     // your own marker
+        ctx.lineWidth = 2.5;
+        ctx.strokeStyle = "rgba(255,255,255,.85)";
+        ctx.stroke();
+      }
+
+      ctx.fillStyle = "#4A4740";
+      ctx.font = "600 20px ui-sans-serif, -apple-system, sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText(p.name, r.x, r.y - PLAYER_R - 10);
+    });
+  }
+
+  /* ---------------- scoreboard ---------------- */
+  function fmt(sec) {
+    var s = Math.floor(sec || 0);
+    return Math.floor(s / 60) + ":" + ("0" + (s % 60)).slice(-2);
+  }
+  var lastBoard = 0;
+  function drawBoard(now) {
+    if (now - lastBoard < 250) return;       // 4x/sec is plenty
+    lastBoard = now;
+    if (!room || !room.state || !room.state.players) return;
+
+    var list = [];
+    room.state.players.forEach(function (p, id) {
+      list.push({ id: id, name: p.name, color: p.color, isIt: p.isIt, itTime: p.itTime || 0 });
+    });
+    list.sort(function (a, b) { return a.itTime - b.itTime; });  // least time = winning
+
+    var html = "";
+    for (var i = 0; i < list.length; i++) {
+      var p = list[i];
+      html += '<div class="row' + (p.isIt ? " it" : "") + '">' +
+                '<span class="dot" style="background:' + p.color + '"></span>' +
+                '<span class="nm">' + escapeHtml(p.name) + (p.id === myId ? " (you)" : "") + "</span>" +
+                (p.isIt ? '<span class="tag">IT</span>' : "") +
+                '<span class="tm">' + fmt(p.itTime) + "</span>" +
+              "</div>";
+    }
+    rowsEl.innerHTML = html || '<div class="row"><span class="nm">waiting for players…</span></div>';
+    if (room.state.players.size > 0) setStatus(room.state.players.size + "/8 in the field");
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c];
+    });
+  }
+
+  /* ---------------- loop ----------------
+     Next frame is scheduled FIRST, so a transient error can never kill
+     rendering for the rest of the session.                             */
+  function frame(now) {
+    requestAnimationFrame(frame);
+    var dt = lastT === null ? 1 / 60 : Math.min((now - lastT) / 1000, 0.1);
+    lastT = now;
+
+    try {
+      if (room && room.state && room.state.players) {
+        var k = 1 - Math.exp(-SMOOTH * dt);
+        room.state.players.forEach(function (p, id) {
+          var r = renderPos[id];
+          if (!r) { r = renderPos[id] = { x: p.x, y: p.y }; }
+          r.x += (p.x - r.x) * k;
+          r.y += (p.y - r.y) * k;
+        });
+      }
+      draw();
+      drawBoard(now);
+    } catch (err) {
+      console.error("render error (loop continues):", err);
+    }
+  }
+  requestAnimationFrame(frame);
+
+  drawField();          // show the field immediately, before anyone joins
+  nameInput.focus();
+})();
+</script>
+</body>
+</html>
