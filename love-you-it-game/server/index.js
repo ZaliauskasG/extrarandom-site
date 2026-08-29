@@ -50,22 +50,22 @@ function buildExt() {
 const PROPS = [
   // ---- first floor ----
   { id:"ladder",  level:"DN", x:18, y:11, w:4.6, h:3.2, solid:1 },  // lobby
-  { id:"shelf",   level:"DN", x:29, y:10, w:4.4, h:6.2, solid:1 },  // IT HQ
+  { id:"shelf",   level:"DN", x:28, y:9, w:4.4, h:6.2, solid:1 },  // IT HQ
   { id:"chair",   level:"DN", x:33, y:27, w:2.3, h:3.6, solid:1 },           // mechanical
   { id:"bottles", level:"DN", x:10, y:37, w:3.1, h:3.3, solid:1 },           // Dave's office
   { id:"spider",  level:"DN", x:35, y:37, w:2.6, h:3.3, solid:1 },           // HR
   // ---- second floor ----
   { id:"recycle", level:"UP", x:15, y:15, w:2.3, h:3.1, solid:1 },           // near WINDOWS reno
-  { id:"zzplant", level:"UP", x:18, y:29, w:3.1, h:3.3, solid:1 },           // near AC
-  { id:"cooler",  level:"UP", x:37, y:20, w:1.6, h:3.8, solid:1 },           // outside Bluebeam
-  { id:"binbox",  level:"UP", x:48, y:15, w:3.6, h:3.0, solid:1 },           // outside Bluebeam
+  { id:"zzplant", level:"UP", x:18, y:29, w:2.3, h:3.3, solid:1 },           // near AC
+  { id:"cooler",  level:"UP", x:47, y:20, w:1.6, h:3.8, solid:1 },           // outside Bluebeam
+  { id:"binbox",  level:"UP", x:48, y:15, w:2.3, h:3.0, solid:1 },           // outside Bluebeam
   { id:"filter",  level:"UP", x:51, y:7,  w:2.6, h:3.6, solid:1 },  // supply / stairs
   { id:"table",   level:"UP", x:42, y:29, w:4.4, h:3.7, solid:1 },  // kitchen centre
   { id:"palm",    level:"UP", x:36, y:37, w:1.7, h:3.9, solid:1 },           // conference
   { id:"surfboard",level:"UP",x:55, y:36, w:5.0, h:1.5 },           // near DOORS reno
   // ---- the cookout, only visible once it happens ----
   { id:"truck",   level:"EXT", x:5, y:7, w:6.0, h:3.3, solid:1, cookout:1 },
-  { id:"grill",   level:"EXT", x:10, y:14, w:1.9, h:2.9, solid:1, cookout:1 },
+  { id:"grill",   level:"EXT", x:10, y:15, w:1.9, h:2.9, cookout:1 },
 ];
 
 const LEVELS = {
@@ -141,7 +141,7 @@ const STATIONS=[
   {id:'teams',    n:'Teams Meeting Issues',    level:'UP', x:30,y:39, need:2, brk:6},
   // Not a fault -- a party. Takes ~2.5x a normal job and drags the whole
   // office outside for ten seconds.
-  {id:'cookout',  n:'Cookout with Vince',      level:'EXT',x:10, y:14, need:2, brk:15, special:'cookout'},
+  {id:'cookout',  n:'Cookout with Vince',      level:'EXT',x:10, y:15, need:2, brk:15, special:'cookout'},
 ];
 const JAIL={level:'UP', x:11, y:39};
 
