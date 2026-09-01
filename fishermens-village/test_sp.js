@@ -81,8 +81,16 @@ setTimeout(async ()=>{
   E('W.gin.x=W.trees[1].x; W.emily.x=W.trees[1].x;');
   E('SIM.doAction(W, W.gin)');
   await wait(1400);
-  console.log('over:', E('W.over'), '| winner:', E('W.winner'), '| mode:', E('mode'));
+  console.log('over:', E('W.over'), '| winner:', E('W.winner'), '| mode right after the hit:', E('mode'));
   if(!E('W.over')) fail.push('round did not end at the hit threshold');
+  if(E('mode') !== 'death') fail.push('losing did not trigger the death animation (mode should be "death")');
+  if(!d.getElementById('scOver').classList.contains('hidden')) fail.push('over screen showed before the death animation finished');
+  console.log('loser animating:', E('deathAnim && deathAnim.role'), '(should be emily -- gin won)');
+  if(E('deathAnim ? deathAnim.role : null') !== 'emily') fail.push('death animation is not targeting the losing player');
+
+  await wait(1300);   // let the hop-and-fall finish
+  console.log('mode after the death animation:', E('mode'), '| over screen visible:', !d.getElementById('scOver').classList.contains('hidden'));
+  if(E('mode') !== 'over') fail.push('did not transition to the over screen once the death animation finished');
   if(d.getElementById('scOver').classList.contains('hidden')) fail.push('game over screen never showed');
 
   console.log('\n=== Will still shows up ===');
