@@ -71,6 +71,20 @@ function startRound(r) {
 }
 
 function tick(r) {
+  try {
+    tickInner(r);
+  } catch (e) {
+    // A throw in here used to take the whole process down with it -- this
+    // runs inside setInterval, so an uncaught exception is fatal to Node,
+    // which drops EVERY connected player, not just this room. Contain it:
+    // log loudly (shows up in Render logs) and close only the room at fault.
+    console.error("tick failed in room " + r.id + ":", e && e.stack || e);
+    try { broadcast(r, { t: "bye", why: "server error" }); } catch (e2) {}
+    closeRoom(r, "error");
+  }
+}
+
+function tickInner(r) {
   const now = Date.now();
   const dt = Math.min(64, now - r.last);
   r.last = now;
@@ -108,6 +122,14 @@ wss.on("connection", ws => {
   ws.on("pong", () => { ws.isAlive = true; });
 
   ws.on("message", raw => {
+    try { handleMessage(ws, raw); }
+    catch (e) {
+      // same reasoning as tick(): don't let one bad message be fatal
+      console.error("message handler failed (role=" + ws.role + "):", e && e.stack || e);
+    }
+  });
+
+  function handleMessage(ws, raw) {
     let m;
     try { m = JSON.parse(raw); } catch (e) { return; }
 
@@ -164,7 +186,7 @@ wss.on("connection", ws => {
         broadcast(r, { t: "rematchWait", who: ws.role });
       }
     }
-  });
+  }
 
   ws.on("close", () => {
     const r = ws.room;
@@ -195,5 +217,16 @@ setInterval(() => {
     try { ws.ping(); } catch (e) {}
   });
 }, 30000);
+
+// Last resort. Without these, any stray exception anywhere kills the process
+// and every player in every room gets dropped at once -- which looks exactly
+// like "we were playing fine and then both got disconnected". Staying up with
+// a logged error is strictly better, and the log tells us what to actually fix.
+process.on("uncaughtException", e => {
+  console.error("UNCAUGHT EXCEPTION (server stayed up):", e && e.stack || e);
+});
+process.on("unhandledRejection", e => {
+  console.error("UNHANDLED REJECTION (server stayed up):", e && e.stack || e);
+});
 
 server.listen(PORT, () => console.log("Fisherman's Village listening on " + PORT));
