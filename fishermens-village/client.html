@@ -136,8 +136,8 @@ input.code{
 
     <div class="lbl">PLAY AS</div>
     <div class="row">
-      <div class="pick on" id="pkGin"><b>Gin</b><i>shake trees, soak Emily</i></div>
-      <div class="pick" id="pkEmily"><b>Emily</b><i>collect cans, peg Gin</i></div>
+      <div class="pick on" id="pkGin"><b>Gin</b><i>shake trees, get Emily wet</i></div>
+      <div class="pick" id="pkEmily"><b>Emily</b><i>use your cans, peg Gin</i></div>
     </div>
 
     <div class="row" style="margin-top:4px;">
@@ -852,8 +852,8 @@ function showOver(winner, note){
     const won = winner === humanRole;
     $("overTitle").textContent = won ? "You got 'em." : "You're soaked.";
     $("overLine").textContent = winner === "gin"
-      ? "Gin got the drop from the branches. Three times."
-      : "Emily found her range. Three cans, three hits.";
+      ? "Gin wins. He definitely didn't rig this game."
+      : "Emily wins. Home field advantage.";
   } else {
     $("overTitle").textContent = "Round over.";
     $("overLine").textContent = "";
