@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pick Sheet Converter</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Graduate&family=Barlow:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --turf:#1E4D35; --turf-deep:#163A28; --chalk:#F6F6F1; --ink:#1C2430;
+  --amber:#E8A317; --line:#C9CFC4; --muted:#5E6A63; --orange:#F4B183;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--chalk);color:var(--ink);
+  font:400 17px/1.55 Barlow,"Segoe UI",system-ui,sans-serif}
+a{color:var(--turf)}
+.wrap{max-width:760px;margin:0 auto;padding:36px 22px 80px}
+header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap}
+h1{font:400 clamp(30px,6vw,44px)/1.05 Graduate,Georgia,serif;margin:0;color:var(--turf);letter-spacing:.01em}
+.lead{margin:12px 0 0;max-width:56ch;color:var(--muted)}
+h2{font:700 21px/1.25 Barlow,sans-serif;margin:0 0 12px}
+button,.btn{font:600 16px/1 Barlow,sans-serif;border-radius:6px;padding:13px 20px;cursor:pointer;border:2px solid var(--turf)}
+.primary{background:var(--turf);color:var(--chalk)}
+.primary:hover:not(:disabled){background:var(--turf-deep)}
+.primary:disabled{opacity:.45;cursor:not-allowed}
+.quiet{background:transparent;color:var(--turf)}
+.quiet:hover{background:#E7EDE6}
+:focus-visible{outline:3px solid var(--amber);outline-offset:2px}
+
+.panel{margin-top:30px;background:#fff;border:1px solid var(--line);border-radius:10px;padding:24px}
+.drop{display:block;border:2px dashed var(--line);border-radius:8px;padding:26px 18px;text-align:center;cursor:pointer;transition:border-color .15s,background .15s}
+.drop:hover,.drop.over{border-color:var(--turf);background:#F1F5F0}
+.drop input{position:absolute;opacity:0;pointer-events:none;width:1px;height:1px}
+.drop strong{display:block;font-size:18px}
+.drop span{color:var(--muted);font-size:15px}
+.actions{display:flex;gap:12px;align-items:center;margin-top:18px;flex-wrap:wrap}
+.hint{color:var(--muted);font-size:15px}
+
+/* the field: 0-100 across the playing surface, end zones either side */
+.field-wrap{margin-top:24px}
+.field{position:relative;height:74px;border-radius:6px;overflow:hidden;
+  background:var(--turf);box-shadow:inset 0 0 0 2px var(--turf-deep)}
+.endzone{position:absolute;top:0;bottom:0;width:7%;background:var(--turf-deep)}
+.endzone.l{left:0}.endzone.r{right:0}
+.play{position:absolute;top:0;bottom:0;left:7%;right:7%}
+.gain{position:absolute;left:0;top:0;bottom:0;width:0;background:rgba(232,163,23,.38);transition:width .35s ease}
+.yard{position:absolute;top:0;bottom:0;width:2px;margin-left:-1px;background:rgba(246,246,241,.55)}
+.yard b{position:absolute;bottom:4px;left:50%;transform:translateX(-50%);font:600 12px/1 Barlow;color:rgba(246,246,241,.8)}
+.ball{position:absolute;top:50%;left:0;width:30px;height:18px;margin:-9px 0 0 -15px;border-radius:50%;
+  background:#7A4A22;box-shadow:inset 0 0 0 2px #5C3517;transition:left .35s ease}
+.ball::after{content:"";position:absolute;left:9px;right:9px;top:8px;height:2px;background:var(--chalk)}
+.readout{display:flex;justify-content:space-between;gap:12px;margin-top:10px;align-items:baseline}
+.pct{font:700 22px/1 Barlow;color:var(--turf);font-variant-numeric:tabular-nums}
+.now{color:var(--ink);font-weight:500;text-align:right}
+details.log{margin-top:12px}
+details.log summary{cursor:pointer;color:var(--muted);font-size:15px}
+.log ol{max-height:220px;overflow:auto;margin:8px 0 0;padding:10px 14px 10px 34px;background:#F4F6F2;border-radius:6px;font-size:14px}
+.log li{margin:2px 0}
+.done{margin-top:22px;padding:18px;border-left:4px solid var(--amber);background:#FFF8E6;border-radius:4px}
+.done p{margin:0 0 12px}
+.error{margin-top:22px;padding:16px;border-left:4px solid #B3261E;background:#FCECEA;border-radius:4px}
+[hidden]{display:none!important}
+
+section.how{margin-top:44px}
+.how ol{padding-left:22px;margin:0}
+.how li{margin:0 0 10px;padding-left:4px}
+.swatch{display:inline-block;width:14px;height:14px;background:var(--orange);border:1px solid #c98a60;vertical-align:-2px;margin:0 2px}
+figure{margin:34px 0 0}
+figure img{display:block;max-width:100%;border:1px solid var(--line);border-radius:6px;background:#fff}
+figcaption{color:var(--muted);font-size:15px;margin-top:8px}
+
+dialog{border:none;border-radius:10px;padding:0;max-width:520px;width:calc(100% - 32px);color:var(--ink)}
+dialog::backdrop{background:rgba(22,58,40,.55)}
+.dlg{padding:24px}
+.dlg p{margin:0 0 14px;color:var(--muted);font-size:15px}
+textarea,input[type=password]{width:100%;font:400 16px/1.45 Barlow,sans-serif;padding:10px 12px;border:1px solid var(--line);border-radius:6px;color:var(--ink)}
+textarea{height:300px;resize:vertical}
+label{display:block;font-weight:600;margin:14px 0 6px}
+.msg{min-height:22px;margin-top:10px;font-size:15px}
+.msg.bad{color:#B3261E}.msg.good{color:var(--turf)}
+@media (prefers-reduced-motion:reduce){.gain,.ball,.drop{transition:none}}
+@media (max-width:520px){.panel{padding:18px}.readout{flex-direction:column;align-items:flex-start}.now{text-align:left}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Pick Sheet Converter</h1>
+      <p class="lead">Upload this week's scanned packet and get back the pool spreadsheet, with anything worth a second look marked in orange.</p>
+    </div>
+    <button class="quiet" id="openRoster" type="button">Edit regulars</button>
+  </header>
+
+  <div class="panel">
+    <label class="drop" id="drop">
+      <input type="file" id="file" accept="application/pdf,.pdf">
+      <strong id="dropTitle">Choose the week's PDF</strong>
+      <span id="dropSub">or drag it here</span>
+    </label>
+    <div class="actions">
+      <button class="primary" id="go" type="button" disabled>Convert</button>
+      <span class="hint" id="goHint">Works best on a laptop or desktop. Takes a few minutes for a full packet.</span>
+    </div>
+
+    <div class="field-wrap" id="progress" hidden>
+      <div class="field" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="bar" aria-label="Conversion progress">
+        <div class="endzone l"></div><div class="endzone r"></div>
+        <div class="play" id="play">
+          <div class="gain" id="gain"></div>
+          <div class="ball" id="ball"></div>
+        </div>
+      </div>
+      <div class="readout"><span class="pct" id="pct">0%</span><span class="now" id="now">Getting ready</span></div>
+      <details class="log"><summary>Show every step</summary><ol id="log"></ol></details>
+    </div>
+
+    <div class="done" id="done" hidden>
+      <p id="summary"></p>
+      <a class="btn primary" id="download" download>Download the spreadsheet</a>
+    </div>
+    <div class="error" id="error" hidden></div>
+  </div>
+
+  <section class="how">
+    <h2>How it works</h2>
+    <ol>
+      <li>Scan everyone's sheets into one PDF and choose it above. It doesn't leave your computer; all the reading happens right here in the browser.</li>
+      <li>Press Convert and leave the tab open while the ball makes its way down the field.</li>
+      <li>Download the spreadsheet. Cells marked <span class="swatch" aria-hidden="true"></span> orange need a look: open the Review tab, where each one is listed next to a picture of that spot on the sheet.</li>
+      <li>Fix anything flagged, then copy the rows into the pool spreadsheet. Fill in the Winner row and the Wins column counts itself.</li>
+    </ol>
+    <p class="hint">The week number comes from the file name, so name the PDF something like "NFL Week 4 Picks". Names are matched against the list of regulars; add new players with Edit regulars.</p>
+  </section>
+
+  <figure>
+    <img src="example-sheet.jpg" alt="An example pick sheet with checkmarks next to the chosen teams, a tiebreaker number and a name at the bottom" loading="lazy">
+    <figcaption>The sheet it expects: one checkmark per game, a tiebreaker number and a name. X's, slashes and filled-in boxes all work, and a scribbled-out box next to a checked one counts as a correction.</figcaption>
+  </figure>
+</div>
+
+<dialog id="roster">
+  <div class="dlg">
+    <h2>Regulars</h2>
+    <p>One player per line, the way they appear in the spreadsheet: first name, then last initial (for example "Mike M").</p>
+    <textarea id="rosterText" spellcheck="false" aria-label="Regular players, one per line"></textarea>
+    <label for="pw">Password</label>
+    <input type="password" id="pw" autocomplete="current-password">
+    <div class="msg" id="rosterMsg" role="status"></div>
+    <div class="actions">
+      <button class="primary" id="saveRoster" type="button">Save regulars</button>
+      <button class="quiet" id="closeRoster" type="button">Close</button>
+    </div>
+  </div>
+</dialog>
+
+<script>
+/* ---------- settings ----------
+   Fill these in from Supabase (Project settings > API). The anon key is
+   meant to be public; the password is checked inside Supabase, never here. */
+const CONFIG = Object.assign({
+  supabaseUrl: "",          // e.g. "https://abcdefghij.supabase.co"
+  supabaseAnonKey: "",
+}, window.POOL_CONFIG || {});
+
+// Used until Supabase is connected, and as a fallback if it can't be reached.
+const DEFAULT_ROSTER = ["Chrissy C","Vince Z","Schelle B","Gin Z","Aryvelle Z","Sabrina S","Mike M",
+  "Steve N","Pam B","Angelo B","Chris T","Eli E","Melanie G","Todd H","Dave B","Adrian L","Michael C",
+  "Carlton N","Linda G","Bill G","John R","Kim R","Phil T","Andrea M","John M","Elizabeth M","Luke C",
+  "Tresa C","Jessica O","Bob C","Jade C","Joey C","Amanda D","Jacoah J","Andrea J","Noah J","Sawyer J",
+  "Andy T","Floyd C","Nathan R","Caylin R","Lee R"];
+
+const CDN = "https://cdn.jsdelivr.net/npm/";
+const LIBS = {
+  pdf: CDN + "pdfjs-dist@4.10.38/build/pdf.min.mjs",
+  pdfWorker: CDN + "pdfjs-dist@4.10.38/build/pdf.worker.min.mjs",
+  opencv: CDN + "@techstark/opencv-js@4.10.0-release.1/dist/opencv.js",
+  tesseract: CDN + "tesseract.js@5.1.1/dist/tesseract.min.js",
+  exceljs: CDN + "exceljs@4.4.0/dist/exceljs.min.js",
+  engine: "pool-engine.js",
+};
+const OCR_PATHS = {
+  workerPath: CDN + "tesseract.js@5.1.1/dist/worker.min.js",
+  corePath: CDN + "tesseract.js-core@5.1.1",
+  langPath: CDN + "@tesseract.js-data/eng@1.0.0/4.0.0",
+};
+
+const $ = id => document.getElementById(id);
+let chosen = null, libsReady = null, lastUrl = null;
+
+/* ---------- roster (Supabase) ---------- */
+const connected = () => !!(CONFIG.supabaseUrl && CONFIG.supabaseAnonKey);
+function sb(path, opts = {}) {
+  return fetch(CONFIG.supabaseUrl.replace(/\/$/, "") + "/rest/v1/" + path, Object.assign({}, opts, {
+    headers: Object.assign({ apikey: CONFIG.supabaseAnonKey, Authorization: "Bearer " + CONFIG.supabaseAnonKey,
+      "Content-Type": "application/json" }, opts.headers || {}),
+  }));
+}
+async function loadRoster() {
+  if (!connected()) return { names: DEFAULT_ROSTER, source: "default" };
+  try {
+    const r = await sb("pool_roster?select=name&order=position.asc");
+    if (!r.ok) throw new Error(r.status);
+    const rows = await r.json();
+    return { names: rows.map(x => x.name), source: "supabase" };
+  } catch (e) {
+    return { names: DEFAULT_ROSTER, source: "fallback" };
+  }
+}
+async function saveRoster(names, password) {
+  const r = await sb("rpc/save_pool_roster", { method: "POST", body: JSON.stringify({ passcode: password, names }) });
+  if (r.ok) return { ok: true, count: await r.json() };
+  const body = await r.json().catch(() => ({}));
+  return { ok: false, wrongPassword: /wrong password/i.test(body.message || ""), detail: body.message || String(r.status) };
+}
+
+$("openRoster").onclick = async () => {
+  $("rosterMsg").textContent = ""; $("rosterMsg").className = "msg";
+  $("rosterText").value = "Loading…";
+  $("roster").showModal();
+  const { names, source } = await loadRoster();
+  $("rosterText").value = names.join("\n");
+  if (source === "default") { $("rosterMsg").textContent = "Not connected to Supabase yet, so this is the built-in list and can't be saved."; $("saveRoster").disabled = true; }
+  else if (source === "fallback") { $("rosterMsg").textContent = "Couldn't reach Supabase; showing the built-in list. Try again in a moment."; $("rosterMsg").className = "msg bad"; $("saveRoster").disabled = true; }
+  else $("saveRoster").disabled = false;
+};
+$("closeRoster").onclick = () => $("roster").close();
+$("saveRoster").onclick = async () => {
+  const names = $("rosterText").value.split("\n").map(s => s.trim()).filter(Boolean);
+  const pw = $("pw").value;
+  const msg = $("rosterMsg");
+  if (!pw) { msg.textContent = "Enter the password to save."; msg.className = "msg bad"; $("pw").focus(); return; }
+  $("saveRoster").disabled = true; msg.textContent = "Saving…"; msg.className = "msg";
+  try {
+    const res = await saveRoster(names, pw);
+    if (res.ok) { msg.textContent = `Saved ${res.count} regulars.`; msg.className = "msg good"; $("pw").value = ""; }
+    else if (res.wrongPassword) { msg.textContent = "That password isn't right. Nothing was changed."; msg.className = "msg bad"; }
+    else { msg.textContent = "Couldn't save: " + res.detail; msg.className = "msg bad"; }
+  } catch (e) { msg.textContent = "Couldn't reach Supabase. Nothing was changed."; msg.className = "msg bad"; }
+  $("saveRoster").disabled = false;
+};
+
+/* ---------- file choice ---------- */
+function choose(f) {
+  if (!f) return;
+  if (!/\.pdf$/i.test(f.name) && f.type !== "application/pdf") { showError("That isn't a PDF. Choose the scanned packet saved as a PDF."); return; }
+  chosen = f;
+  $("dropTitle").textContent = f.name;
+  $("dropSub").textContent = `${(f.size / 1048576).toFixed(1)} MB, ready to convert`;
+  $("go").disabled = false;
+  $("error").hidden = true;
+  if (!libsReady) libsReady = loadLibs();       // start fetching the readers now
+}
+$("file").onchange = e => choose(e.target.files[0]);
+const drop = $("drop");
+["dragenter", "dragover"].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", e => choose(e.dataTransfer.files[0]));
+
+/* ---------- libraries (loaded on first use) ---------- */
+function script(src) {
+  return new Promise((ok, bad) => {
+    const s = document.createElement("script"); s.src = src; s.async = true;
+    s.onload = ok; s.onerror = () => bad(new Error("Couldn't load " + src.split("/").pop()));
+    document.head.appendChild(s);
+  });
+}
+async function loadLibs() {
+  const pdfjsLib = await import(LIBS.pdf);
+  // a module worker from a blob, so the CDN worker isn't blocked as cross-origin
+  const wsrc = URL.createObjectURL(new Blob([`import "${LIBS.pdfWorker}";`], { type: "text/javascript" }));
+  pdfjsLib.GlobalWorkerOptions.workerPort = new Worker(wsrc, { type: "module" });
+  await Promise.all([script(LIBS.opencv), script(LIBS.tesseract), script(LIBS.exceljs), script(LIBS.engine)]);
+  let c = window.cv;
+  if (c instanceof Promise) c = await c;
+  if (!c.Mat) await new Promise(r => { c.onRuntimeInitialized = r; });
+  window.cv = c;
+  return pdfjsLib;
+}
+
+/* ---------- progress ---------- */
+const yardLabels = [10, 20, 30, 40, 50, 40, 30, 20, 10];
+yardLabels.forEach((n, i) => {
+  const y = document.createElement("div"); y.className = "yard"; y.style.left = ((i + 1) * 10) + "%";
+  y.innerHTML = `<b>${n}</b>`; $("play").insertBefore(y, $("ball"));
+});
+function setProgress(p) {
+  p = Math.max(0, Math.min(100, p));
+  $("gain").style.width = p + "%"; $("ball").style.left = p + "%";
+  $("pct").textContent = Math.round(p) + "%";
+  $("bar").setAttribute("aria-valuenow", Math.round(p));
+}
+function setStatus(t) {
+  $("now").textContent = t;
+  const li = document.createElement("li"); li.textContent = t; $("log").appendChild(li);
+  li.scrollIntoView({ block: "nearest" });
+}
+function showError(t) { const e = $("error"); e.textContent = t; e.hidden = false; }
+
+/* ---------- convert ---------- */
+$("go").onclick = async () => {
+  if (!chosen) return;
+  $("go").disabled = true; $("file").disabled = true;
+  $("done").hidden = true; $("error").hidden = true;
+  $("progress").hidden = false; $("log").innerHTML = ""; setProgress(0);
+  const started = Date.now();
+  try {
+    setStatus("Loading the page readers (about 12 MB the first time, then cached)");
+    const pdfjsLib = await (libsReady || (libsReady = loadLibs()));
+    setProgress(2);
+    setStatus("Loading the list of regulars");
+    const { names, source } = await loadRoster();
+    setStatus(source === "supabase" ? `${names.length} regulars loaded` :
+      source === "fallback" ? `Couldn't reach Supabase, using the built-in list of ${names.length} regulars` :
+      `Using the built-in list of ${names.length} regulars`);
+    const cores = navigator.hardwareConcurrency || 4;
+    const res = await PoolEngine.convert(chosen, {
+      pdfjsLib, roster: names, paths: OCR_PATHS, workers: Math.max(2, Math.min(4, cores - 1)),
+      status: setStatus, progress: setProgress,
+    });
+    const secs = Math.round((Date.now() - started) / 1000);
+    setStatus(`Done in ${secs >= 60 ? Math.floor(secs / 60) + " min " : ""}${secs % 60} s`);
+    if (lastUrl) URL.revokeObjectURL(lastUrl);
+    lastUrl = URL.createObjectURL(res.blob);
+    $("download").href = lastUrl; $("download").download = res.filename;
+    $("summary").textContent = res.items
+      ? `Read ${res.sheets} sheets. ${res.items} item${res.items === 1 ? "" : "s"} on ${res.sheetsWithFlags} sheet${res.sheetsWithFlags === 1 ? "" : "s"} need a look; they're orange in the spreadsheet and listed on the Review tab.`
+      : `Read ${res.sheets} sheets and everything came through cleanly.`;
+    $("done").hidden = false;
+    $("download").focus();
+  } catch (e) {
+    console.error(e);
+    showError("The conversion stopped: " + (e && e.message ? e.message : e) + ". Check the file is the scanned packet PDF and try again.");
+  } finally {
+    $("go").disabled = false; $("file").disabled = false;
+  }
+};
+</script>
+</body>
+</html>
