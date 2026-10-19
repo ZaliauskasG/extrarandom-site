@@ -17,26 +17,21 @@ const FAMILIES = [
   { hue: 4,   words: ["dining", "food", "dinner", "lunch", "brunch", "breakfast", "eat$", "bbq", "barbecue",
                       "grill", "cook", "potluck", "restaurant", "ramen", "sushi", "pizza", "taco",
                       "burger", "wings", "coffee", "cafe", "café", "bakery", "dessert", "ice cream",
-                      "picnic", "seafood", "crawfish", "pho", "thai", "steak", "donut", "food truck",
-                      "drink", "drinks", "bar$", "bars", "beer", "brew", "brewery", "wine", "winery",
-                      "cocktail", "happy hour", "pub$", "cider", "distillery", "tasting", "mocktail",
-                      "boba", "tea$"] },
+                      "picnic", "seafood", "crawfish", "pho", "thai", "steak", "donut", "food truck"] },
   // Party: gold. Celebrations and nights out.
   { hue: 44,  words: ["party", "parties", "birthday", "celebration", "celebrate", "dance", "dancing",
                       "club", "karaoke", "hangout", "hang out", "meetup", "social", "night out",
-                      "holiday", "wedding", "shower", "reunion", "get together", "gathering", "bash"] },
-  // Active: green. Sports, fitness, outdoors, and anything on the water.
+                      "holiday", "wedding", "shower", "reunion", "get together", "gathering", "bash",
+                      "drink", "drinks", "bar$", "bars", "beer", "brew", "brewery", "wine", "winery",
+                      "cocktail", "happy hour", "pub$", "cider", "distillery", "tasting", "mocktail",
+                      "boba", "tea$"] },
+  // Active: green. Sports, fitness.
   { hue: 140, words: ["active", "sport", "basketball", "football", "softball", "baseball", "paintball",
                       "pickleball", "kickball", "dodgeball", "volleyball", "soccer", "tennis",
                       "golf", "disc golf", "bowling", "climb", "boulder", "gym", "workout",
                       "fitness", "run", "running", "5k", "race", "yoga", "skate", "ski$",
-                      "snowboard", "hockey", "frisbee", "boxing", "martial", "pilates", "crossfit",
-                      "outdoor", "outdoors", "hike", "hiking", "camp", "camping", "park", "trail",
-                      "nature", "garden", "bike", "biking", "cycling", "walk", "zoo", "farm",
-                      "preserve", "birding", "stargazing", "orchard", "botanical",
-                      "water", "beach", "swim", "pool", "kayak", "canoe", "paddle", "boat",
-                      "sail", "surf", "snorkel", "dive", "diving", "scuba", "lake", "river",
-                      "spring", "springs", "fishing", "fish", "jet ski", "tubing", "sandbar", "island"] },
+                      "snowboard", "hockey", "frisbee", "boxing", "martial", "pilates", "crossfit", 
+                      "surf", "bike", "biking", "cycling", "walk", "swimming""] },
   // Creative: teal. Making things and taking things in quietly.
   { hue: 172, words: ["creative", "art", "arts", "craft", "crafts", "paint", "painting", "pottery",
                       "draw", "drawing", "sketch", "photo", "photography", "write", "writing", "music class",
@@ -49,9 +44,13 @@ const FAMILIES = [
   { hue: 262, words: ["game", "games", "board game", "trivia", "poker", "cards", "gaming",
                       "video game", "arcade", "escape", "puzzle", "chess", "dnd", "d&d",
                       "laser tag", "mini golf", "go kart", "bingo"] },
-  // Travel: orange.
+  // Travel/Outdoors: orange. Travel, outdoors, and anything on the water.
   { hue: 24,  words: ["trip", "travel", "road trip", "getaway", "vacation", "weekend away",
-                      "flight", "cruise", "drive", "tour$", "tours", "day trip"] },
+                      "flight", "cruise", "drive", "tour$", "tours", "day trip", "outdoor", "outdoors", "hike", 
+                      "hiking", "camp", "camping", "park", "trail", "nature", "garden", "zoo", "farm", "preserve", 
+                      "birding", "stargazing", "orchard", "botanical", "beach", "boat", "sail", "snorkel", "dive", "diving",
+                      "scuba", "lake", "river", "spring", "springs", "fishing", "fish", "pool", "kayak", "canoe", 
+                      "paddle", "jet ski", "tubing", "sandbar", "island", "water"] },
   // Community: pink.
   { hue: 332, words: ["community", "family", "kids", "volunteer", "church", "school", "neighbors", "charity"] },
 ];
