@@ -1,0 +1,199 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@500;700;800&display=block" rel="stylesheet">
+<style>
+/* The tour video's stage: 720x1280, one frame drawn per render(t) call.
+   tools/tour/render.py screenshots it frame by frame. */
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:720px;height:1280px;overflow:hidden}
+body{font-family:"M PLUS Rounded 1c",sans-serif;color:#3B4553;-webkit-font-smoothing:antialiased;
+  background:repeating-linear-gradient(180deg,#F6F8FA 0 3px,#EEF2F6 3px 6px);position:relative}
+#glow{position:absolute;left:50%;top:760px;width:900px;height:900px;margin:-450px 0 0 -450px;border-radius:50%;
+  background:radial-gradient(circle,hsla(var(--h),85%,62%,.30) 0,hsla(var(--h),85%,62%,0) 62%);--h:198}
+#cap{position:absolute;left:0;right:0;top:70px;text-align:center;padding:0 40px}
+#cap .line{position:absolute;left:40px;right:40px;top:0}
+#cap h1{font-size:50px;font-weight:800;line-height:1.08;letter-spacing:-.015em;color:#3B4553}
+#cap p{font-size:27px;font-weight:500;line-height:1.35;color:#7A8596;margin-top:16px}
+#dots{position:absolute;top:286px;left:0;right:0;display:flex;justify-content:center;gap:10px}
+#dots i{width:10px;height:10px;border-radius:50%;background:#D3DAE3}
+#dots i.on{background:hsl(var(--h) 75% 48%);width:26px;border-radius:6px}
+#phone{position:absolute;left:80px;top:330px;width:560px;height:862px;border-radius:44px;
+  background:#fff;padding:0;box-shadow:0 0 0 9px #fff,0 0 0 10px #E1E7EE,0 30px 70px -20px rgba(40,60,90,.45);
+  overflow:hidden}
+#screen{position:absolute;inset:0;overflow:hidden;border-radius:44px}
+.layer{position:absolute;left:0;top:0;width:560px;will-change:transform,opacity}
+.layer img{display:block;width:560px}
+#tap{position:absolute;width:64px;height:64px;margin:-32px 0 0 -32px;border-radius:50%;
+  background:rgba(59,69,83,.28);box-shadow:0 0 0 3px rgba(255,255,255,.9);opacity:0;pointer-events:none}
+#note{position:absolute;left:16px;right:16px;top:14px;border-radius:24px;padding:16px 18px 16px 16px;
+  background:rgba(250,251,253,.97);box-shadow:0 14px 40px -10px rgba(30,45,70,.45),0 0 0 1px rgba(0,0,0,.04);
+  display:flex;gap:14px;align-items:flex-start;opacity:0}
+#note .ic{flex:none;width:52px;height:52px;border-radius:13px;background:linear-gradient(180deg,#fff,#EEF2F6);
+  box-shadow:inset 0 0 0 1px #E1E7EE;display:flex;align-items:center;justify-content:center}
+#note .meta{display:flex;justify-content:space-between;font-size:17px;color:#8792A2;font-weight:700;letter-spacing:.02em}
+#note .msg{font-size:20px;line-height:1.3;font-weight:500;color:#3B4553;margin-top:3px}
+.logo{display:inline-flex}
+.logo i{width:var(--s,18px);height:var(--s,18px);border-radius:50%;margin-left:calc(var(--s,18px) * -.33);display:block;
+  background:radial-gradient(circle at 35% 30%,hsl(var(--h) 90% 82%) 0 18%,hsl(var(--h) 80% 55%) 55%,hsl(var(--h) 75% 42%) 100%);
+  box-shadow:0 1px 2px rgba(0,0,0,.18),0 0 0 calc(var(--s,18px) * .11) #fff}
+.logo i:first-child{margin-left:0}
+#end{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  text-align:center;opacity:0;background:repeating-linear-gradient(180deg,#F6F8FA 0 3px,#EEF2F6 3px 6px)}
+#end .logo{--s:58px;margin-bottom:34px}
+#end h2{font-size:84px;font-weight:800;letter-spacing:-.02em;line-height:1}
+#end .with{font-size:34px;font-weight:700;color:#8792A2;margin-top:10px}
+#end p{font-size:30px;font-weight:700;color:#5B6676;margin-top:60px;line-height:1.35}
+#end .url{font-size:22px;color:#8792A2;font-weight:700;margin-top:18px;letter-spacing:.01em}
+</style></head>
+<body>
+<div id="glow"></div>
+<div id="cap"></div>
+<div id="dots"><i></i><i></i><i></i><i></i><i></i></div>
+<div id="phone"><div id="screen"></div><div id="tap"></div>
+  <div id="note"><div class="ic"><span class="logo" style="--s:13px"><i style="--h:4"></i><i style="--h:46"></i><i style="--h:128"></i><i style="--h:192"></i><i style="--h:296"></i></span></div>
+    <div style="flex:1"><div class="meta"><span>SQUAD UP</span><span>now</span></div>
+      <div class="msg">Reminder: Dinner at Bella's is tomorrow, 7pm. You said you're in.</div></div></div>
+</div>
+<div id="end">
+  <span class="logo"><i style="--h:4"></i><i style="--h:46"></i><i style="--h:128"></i><i style="--h:192"></i><i style="--h:296"></i></span>
+  <h2>Squad Up</h2><div class="with">with Gin</div>
+  <p>Less group-chat chaos.<br>More plans that happen.</p>
+</div>
+<script>
+const MAN = window.MAN, BASE = window.SHOTS;
+const SC = 560 / MAN.viewport[0], SCREEN_H = 862;
+const ease = x => x <= 0 ? 0 : x >= 1 ? 1 : x < .5 ? 4*x*x*x : 1 - Math.pow(-2*x + 2, 3) / 2;
+const out = x => x <= 0 ? 0 : x >= 1 ? 1 : 1 - Math.pow(1 - x, 3);
+const prog = (t, a, b) => Math.max(0, Math.min(1, (t - a) / (b - a)));
+
+// scroll (CSS px) that puts a box's middle at `frac` of the screen height
+function scrollFor(shot, key, frac) {
+  const s = MAN.shots[shot], b = s.boxes[key], vh = SCREEN_H / SC;
+  const y = b[1] + b[3] / 2 - vh * (frac == null ? .5 : frac);
+  return Math.max(0, Math.min(s.h - vh, y));
+}
+
+/* Each scene: caption, hue, length, and draw(t) returning the layers to
+   show [{shot, scroll, opacity, x}] plus an optional tap {shot,key,at}. */
+const S = [
+ { h1: "Make a plan in seconds", p: "Pick the time, or let the<br>squad vote on one.", hue: 198, len: 4.4,
+   draw(t) {
+     const k = ease(prog(t, 1.75, 2.2));
+     // a page push, like tapping through on a phone
+     return { layers: [{ shot: "home_top", scroll: 0, x: -k * 180, opacity: 1, dim: k },
+                       { shot: "start", scroll: 0, x: (1 - k) * 560, opacity: k > 0 ? 1 : 0, shadow: k > 0 && k < 1 }],
+              taps: [{ shot: "home_top", key: "newplan", at: 1.2, scroll: 0 },
+                     { shot: "start", key: "findtime", at: 3.5, scroll: 0 }] };
+   } },
+ { h1: "Find a time that works", p: "Tap the dates you can make.<br>The best one rises to the top.", hue: 24, len: 5.0,
+   draw(t) {
+     const target = scrollFor("poll_before", "card", .5), sc = ease(prog(t, .35, 1.5)) * target;
+     const swap = t >= 2.35 ? 1 : 0;
+     return { layers: [{ shot: swap ? "poll_after" : "poll_before", scroll: sc, opacity: 1 }],
+              taps: [{ shot: "poll_before", key: "tap", at: 2.1, scroll: target }] };
+   } },
+ { h1: "Say you're interested", p: "Get a heads-up whenever<br>someone schedules it.", hue: 140, len: 5.2,
+   draw(t) {
+     const a = scrollFor("act_before", "card", .52), from = Math.max(0, a - 380);
+     const sc = from + ease(prog(t, .25, 1.4)) * (a - from);
+     const b = scrollFor("act_after", "card", .5);
+     const k = ease(prog(t, 2.0, 2.35));
+     const L = [];
+     if (k < 1) L.push({ shot: "act_before", scroll: sc, opacity: 1 - k });
+     if (k > 0) L.push({ shot: t >= 3.45 ? "act_open" : "act_after", scroll: b, opacity: k });
+     return { layers: L, taps: [{ shot: "act_before", key: "tap", at: 1.75, scroll: a },
+                                 { shot: "act_after", key: "tap", at: 3.2, scroll: b }] };
+   } },
+ { h1: "Texts or emails, your call", p: "A reminder before every plan.<br>The bell quiets anything you don't want.", hue: 350, len: 5.4,
+   note: [0.35, 2.7],
+   draw(t) {
+     const s = scrollFor("bell_before", "card", .55);
+     return { layers: [{ shot: t >= 3.75 ? "bell_after" : "bell_before", scroll: s, opacity: 1 }],
+              taps: [{ shot: "bell_before", key: "tap", at: 3.5, scroll: s }] };
+   } },
+ { h1: "Your whole squad,<br>in one place", p: "See who's around and<br>what everyone's into.", hue: 270, len: 3.8,
+   draw(t) {
+     return { layers: [{ shot: t >= 1.35 ? "members_open" : "members", scroll: 0, opacity: 1 }],
+              taps: [{ shot: "members", key: "tap", at: 1.1, scroll: 0 }] };
+   } },
+];
+const END_LEN = 2.6, FADE = .3;
+let T0 = 0; S.forEach(s => { s.t0 = T0; T0 += s.len; });
+window.DURATION = T0 + END_LEN;
+
+const imgs = {};
+function layerEl(i) {
+  let el = document.getElementById("L" + i);
+  if (!el) { el = document.createElement("div"); el.className = "layer"; el.id = "L" + i;
+    el.appendChild(document.createElement("img")); document.getElementById("screen").appendChild(el); }
+  return el;
+}
+const capEls = S.map((s, i) => { const d = document.createElement("div"); d.className = "line";
+  d.innerHTML = `<h1>${s.h1}</h1><p>${s.p}</p>`; document.getElementById("cap").appendChild(d); return d; });
+
+window.render = function (t) {
+  const end = t >= T0;
+  const i = end ? S.length - 1 : S.findIndex(s => t < s.t0 + s.len);
+  const sc = S[i], lt = t - sc.t0;
+  // captions: crossfade at scene changes, slide up a touch on the way in
+  capEls.forEach((el, j) => {
+    const s = S[j]; let o = 0;
+    if (j === i) o = Math.min(prog(lt, 0, FADE), end ? 1 - prog(t - T0, 0, .3) : 1);
+    if (j === i - 1) o = 1 - prog(lt, 0, FADE * .7);
+    el.style.opacity = o; el.style.transform = `translateY(${(1 - out(prog(lt, 0, .45))) * (j === i ? 14 : 0)}px)`;
+  });
+  document.querySelectorAll("#dots i").forEach((d, j) => d.className = j === i ? "on" : "");
+  // background glow drifts to each scene's hue
+  const prev = S[Math.max(0, i - 1)].hue, hk = i === 0 ? 1 : ease(prog(lt, 0, .6));
+  let dh = sc.hue - prev; if (dh > 180) dh -= 360; if (dh < -180) dh += 360;
+  const hue = prev + dh * hk;
+  document.body.style.setProperty("--h", hue);
+  document.getElementById("glow").style.setProperty("--h", hue);
+  // phone content
+  const d = sc.draw(Math.min(lt, sc.len));
+  const intro = i === 0 ? out(prog(lt, 0, .45)) : 1;
+  // scene changes: the outgoing scene's last look fades under the new one
+  let layers = d.layers;
+  if (i > 0 && lt < .35) {
+    const pd = S[i - 1].draw(S[i - 1].len), k = ease(prog(lt, 0, .35));
+    layers = pd.layers.map(l => ({ ...l, opacity: l.opacity * (1 - k) })).concat(layers.map(l => ({ ...l, opacity: l.opacity * k })));
+  }
+  const phone = document.getElementById("phone");
+  phone.style.opacity = intro; phone.style.transform = `translateY(${(1 - intro) * 30}px) scale(${.97 + .03 * intro})`;
+  document.querySelectorAll(".layer").forEach(el => el.style.display = "none");
+  layers.forEach((l, j) => {
+    const el = layerEl(j), img = el.firstChild, src = BASE + MAN.shots[l.shot].file;
+    if (img.getAttribute("src") !== src) img.setAttribute("src", src);
+    el.style.display = "block"; el.style.opacity = l.opacity;
+    el.style.filter = l.dim ? `brightness(${1 - .12 * l.dim})` : "";
+    el.style.boxShadow = l.shadow ? "-18px 0 40px -10px rgba(30,45,70,.35)" : "";
+    el.style.transform = `translate(${(l.x || 0)}px, ${-l.scroll * SC}px)`;
+  });
+  // the finger: a soft press and release
+  const tap = document.getElementById("tap"); tap.style.opacity = 0;
+  (d.taps || []).forEach(tp => {
+    const u = lt - (tp.at - .22);
+    if (u < 0 || u > .62) return;
+    const b = MAN.shots[tp.shot].boxes[tp.key];
+    tap.style.left = (b[0] + b[2] / 2) * SC + "px"; tap.style.top = ((b[1] + b[3] / 2) - tp.scroll) * SC + "px";
+    const press = u < .22 ? out(u / .22) : 1, rel = prog(u, .3, .62);
+    tap.style.opacity = press * (1 - rel);
+    tap.style.transform = `scale(${1.35 - .45 * press + rel * .9})`;
+  });
+  // the text-message banner
+  const note = document.getElementById("note");
+  if (sc.note && !end) {
+    const [a, b] = sc.note, k = out(prog(lt, a, a + .45)) * (1 - ease(prog(lt, b, b + .4)));
+    note.style.opacity = k; note.style.transform = `translateY(${(k - 1) * 120}px)`;
+  } else note.style.opacity = 0;
+  // the closing card
+  const e = end ? out(prog(t - T0, 0, .5)) : 0;
+  const endEl = document.getElementById("end");
+  endEl.style.opacity = e;
+  endEl.style.transform = `scale(${1.04 - .04 * e})`;
+  return true;
+};
+window.ready = Promise.all([document.fonts.ready, ...Object.values(MAN.shots).map(s => new Promise(r => {
+  const im = new Image(); im.onload = im.onerror = r; im.src = BASE + s.file; imgs[s.file] = im; }))]);
+</script>
+</body></html>
