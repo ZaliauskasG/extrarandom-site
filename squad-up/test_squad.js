@@ -1,0 +1,2335 @@
+/* Drives the real server over real HTTP through the whole lifecycle:
+   signup, post, RSVP, suggest, approve, switch, cancel, nudge, and the
+   "Let's do this sometime" list. */
+process.env.SQUAD_DB_FILE = "/tmp/squadup-test-" + Date.now() + ".json";
+process.env.SQUAD_BASE_URL = "http://127.0.0.1:3777/squadup";
+// the whole run sends far more mail than a real day would; the limits get
+// their own isolated checks below
+process.env.SQUAD_EMAIL_PER_PERSON_DAY = "1000";
+process.env.SQUAD_EMAIL_PER_DAY = "100000";
+process.env.SQUAD_SMS_PER_PERSON_DAY = "1000";
+process.env.SQUAD_SMS_PER_DAY = "100000";
+process.env.TWILIO_AUTH_TOKEN = "test-twilio-token";   // lets the text-reply webhook check signatures
+process.env.SQUAD_SMS_LIVE = "on";   // texting checks below; the paused state has its own checks
+process.env.SQUAD_PHONE_SIGNUPS_PER_IP_HOUR = "1000";   // the sign-up brake gets its own check below
+process.env.SQUAD_PHONE_SIGNUPS_PER_DAY = "1000";
+
+const { server, runNudges, db, notifier, live } = require("./server/index.js");
+const C = require("./lib/core.js");
+const fail = [];
+const PORT = 3777;
+const B = `http://127.0.0.1:${PORT}`;
+
+const icsOf = t => (/DTSTART:(\w+)/.exec(t) || [])[1];
+const check = (cond, msg) => { console.log(`  ${cond ? "ok" : "FAIL"}: ${msg}`); if (!cond) fail.push(msg); };
+
+// New categories start with nobody following them; people turn them on from
+// their page. Most checks below were written for a squad where everyone
+// follows everything, so a category named in a request is first made and
+// turned on for every member -- as if they'd all tapped it -- unless the
+// request says { keepNew: true }. The new-category rule has its own checks.
+async function everyoneFollows(name) {
+  if (!name || await db.getTagByName(name)) return;
+  const t = await db.createTag({ name, created_by: null });
+  // an established category, not a new one
+  db._raw().tags.find(x => x.id === t.id).created_at = new Date(Date.now() - 60 * 864e5).toISOString();
+  for (const p of await db.listPeople())
+    if ((p.email || p.phone) && p.confirmed_at) await db.setSubscription(p.id, t.id, true);
+}
+async function api(path, body) {
+  // sign-ups need the two boxes ticked; individual checks below untick them
+  if (path === "/squadup/api/signup") body = { agree: true, sms_consent: true, ...body };
+  if (body && body.tag_name && !body.keepNew && path !== "/squadup/api/signup") await everyoneFollows(body.tag_name);
+  // the organizer's "tell everyone" choice: most checks below are about what
+  // goes out when they say yes; the quiet choice has its own checks
+  if (body && !("notify" in body) && ["/squadup/api/activity-edit", "/squadup/api/lock", "/squadup/api/cancel",
+      "/squadup/api/option-decide"].includes(path)) body = { ...body, notify: true };
+  const r = await fetch(B + path, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body || {})
+  });
+  const out = { status: r.status, body: await r.json().catch(() => ({})) };
+  // email-only sign-ups confirm their address by tapping a link; most checks
+  // below stand in for that tap (the confirmation itself has its own checks)
+  if (path === "/squadup/api/signup" && out.body.confirmEmail && !body.noConfirm) {
+    const p = await db.getPersonByToken(out.body.token);
+    await db.updatePerson(p.id, { email_confirmed_at: new Date().toISOString() });
+  }
+  return out;
+}
+const getPage = async path => {
+  const r = await fetch(B + path);
+  return { status: r.status, text: await r.text() };
+};
+
+(async () => {
+  await new Promise(r => server.listen(PORT, r));
+
+  console.log("=== signup ===");
+  const gin = (await api("/squadup/api/signup", { name: "Gin", email: "gin@x.test", tags: [] })).body;
+  check(!!gin.token, "signup returns a personal link");
+
+  const dupe = await api("/squadup/api/signup", { name: "Someone Else", email: "GIN@x.test" });
+  check(dupe.body.emailed === true && !dupe.body.token,
+    "a repeat email is mailed the existing link, never shown on screen");
+
+  const bad = await api("/squadup/api/signup", { name: "X", email: "nope" });
+  check(bad.status === 400, "a malformed email is rejected");
+
+  console.log("\n=== posting an activity ===");
+  const made = await api("/squadup/api/activity", {
+    token: gin.token, title: "Rock climbing", tag_name: "Climbing",
+    primary: "2030-04-18T18:00", backup: "2030-04-17T18:00", note: "Bring shoes"
+  });
+  check(made.status === 200 && !!made.body.id, "activity posts with a primary and a backup");
+  const A = made.body.id;
+
+  let bundle = await db.getActivity(A);
+  let opts = await db.listOptions(A);
+  const primary = opts.find(o => o.kind === "primary");
+  check(bundle.locked_option_id === primary.id, "the first choice is locked immediately");
+  check(opts.length === 2 && opts.every(o => o.status === "approved"),
+    "both creator-set times start approved");
+
+  const noTime = await api("/squadup/api/activity", { token: gin.token, title: "X", tag_name: "Y" });
+  check(noTime.status === 400, "an activity with no time is rejected");
+
+  console.log("\n=== new tags reach everyone ===");
+  const danielle = (await api("/squadup/api/signup", { name: "Danielle", email: "em@x.test" })).body;
+  const will = (await api("/squadup/api/signup", { name: "Will", email: "will@x.test" })).body;
+  const raif = (await api("/squadup/api/signup", { name: "Raif", email: "raif@x.test" })).body;
+  const paint = await api("/squadup/api/activity", {
+    token: gin.token, title: "Paintball", tag_name: "Paintball", primary: "2030-05-02T10:00"
+  });
+  const paintTag = (await db.getActivity(paint.body.id)).tag_id;
+  const subs = await db.subscribersOfTag(paintTag);
+  check(subs.length === 4, "people who turned a category on follow it (got " + subs.length + ")");
+
+  console.log("\n=== rsvp ===");
+  const backup = opts.find(o => o.kind === "backup");
+  await api("/squadup/api/rsvp", { token: danielle.token, activity_id: A, option_id: primary.id });
+  await api("/squadup/api/rsvp", { token: danielle.token, activity_id: A, option_id: backup.id });
+  let mine = (await db.listResponses(A)).find(r => r.person_id !== null && r.option_ids.length === 2);
+  check(!!mine, "one person can say both times work");
+
+  const off = await api("/squadup/api/rsvp", { token: danielle.token, activity_id: A, option_id: primary.id });
+  check(off.body.option_ids.length === 1, "tapping a time again takes it back off");
+
+  await api("/squadup/api/rsvp", { token: will.token, activity_id: A, cant: true });
+  const outRow = (await db.listResponses(A)).find(r => r.can_make_it === false);
+  check(!!outRow, "\"can't make any\" records a soft out");
+  check((await db.getActivity(A)).locked_option_id === primary.id,
+    "a soft out does NOT reopen the plan");
+
+  console.log("\n=== suggesting a third time ===");
+  const sug = await api("/squadup/api/suggest", {
+    token: will.token, activity_id: A, starts_at: "2030-04-19T19:00", label: "after work"
+  });
+  check(sug.status === 200, "anyone can suggest another time");
+  opts = await db.listOptions(A);
+  const pending = opts.find(o => o.status === "pending");
+  check(!!pending, "a suggestion lands as pending, not live");
+
+  const asStranger = await getPage(`/squadup/a/${A}`);
+  check(!asStranger.text.includes("Apr 19"),
+    "a pending suggestion is invisible to everyone but the creator");
+  const asCreator = await getPage(`/squadup/a/${A}?t=${gin.token}`);
+  check(asCreator.text.includes("Apr 19"), "the creator does see it, with approve/dismiss");
+
+  const notMine = await api("/squadup/api/option-decide", {
+    token: danielle.token, option_id: pending.id, approve: true
+  });
+  check(notMine.status === 403, "only the creator can approve a suggestion");
+
+  await api("/squadup/api/option-decide", { token: gin.token, option_id: pending.id, approve: true });
+  check((await db.getOption(pending.id)).status === "approved", "approving makes it votable");
+
+  const sug2 = await api("/squadup/api/suggest", {
+    token: danielle.token, activity_id: A, starts_at: "2030-04-20T12:00"
+  });
+  const p2 = (await db.listOptions(A)).find(o => o.status === "pending");
+  await api("/squadup/api/option-decide", { token: gin.token, option_id: p2.id, approve: false });
+  check(!(await db.getOption(p2.id)), "a dismissed suggestion is removed outright");
+
+  console.log("\n=== the switch suggestion ===");
+  // three people back the approved suggestion, only Danielle backs the primary
+  for (const t of [will.token, raif.token, danielle.token]) {
+    await api("/squadup/api/rsvp", { token: t, activity_id: A, option_id: pending.id });
+  }
+  let a2 = await db.getActivity(A);
+  let o2 = await db.listOptions(A), r2 = await db.listResponses(A);
+  const sw = C.switchSuggestion(a2, o2, r2);
+  check(!!sw && sw.to.id === pending.id, "a better-attended time surfaces as a suggestion");
+  check(a2.locked_option_id === primary.id, "but nothing switches on its own");
+
+  const belowQuorum = C.switchSuggestion(a2, o2, r2.slice(0, 2));
+  check(belowQuorum === null, "no suggestion until enough people have answered");
+
+  const lockByOther = await api("/squadup/api/lock", {
+    token: danielle.token, activity_id: A, option_id: pending.id
+  });
+  check(lockByOther.status === 403, "only the creator can move the plan");
+
+  await api("/squadup/api/lock", { token: gin.token, activity_id: A, option_id: pending.id });
+  check((await db.getActivity(A)).locked_option_id === pending.id,
+    "the creator confirming is what actually moves it");
+
+  console.log("\n=== joining through an activity link ===");
+  const lainee = await api("/squadup/api/signup", {
+    name: "Lainee", email: "lainee@x.test", activity_id: A
+  });
+  check(!!lainee.body.token, "a newcomer signs up straight from an activity");
+  const laineePerson = await db.getPersonByEmail("lainee@x.test");
+  const lSubs = await db.listSubscriptions(laineePerson.id);
+  check(lSubs.length === 1, "they get that one category, not everything (got " + lSubs.length + ")");
+  const lResp = (await db.listResponses(A)).find(r => r.person_id === laineePerson.id);
+  check(!!lResp, "and their RSVP is recorded in the same step");
+
+  console.log("\n=== the day-before reminder ===");
+  await db.updateActivity(A, { finalize_nudge_sent_at: null });
+  const lockedNow = await db.listOptions(A);
+  const remOpt = lockedNow.find(o => o.starts_at === "2030-04-19T19:00");
+  await db.updateActivity(A, { locked_option_id: remOpt.id });
+  // 7pm Eastern on Apr 19 is 23:00 UTC; the reminder window opens 24 hours before
+  check(!C.needsReminder(await db.getActivity(A), lockedNow, new Date("2030-04-18T22:30:00Z")), "nothing goes out more than a day ahead");
+  const remBox = [], remOrg = (await db.getPersonByToken(gin.token)).id;
+  const realRem = notifier.send;
+  notifier.send = async (p, m) => { remBox.push({ to: p, ...m }); return { ok: true }; };
+  const n1 = await runNudges(new Date("2030-04-18T23:30:00Z"));
+  notifier.send = realRem;
+  const inIds = (await db.listResponses(A)).filter(r => (r.option_ids || []).includes(remOpt.id)).map(r => r.person_id);
+  check(n1 === 1 && remBox.length >= 2 && remBox.every(m => inIds.includes(m.to.id) || m.to.id === remOrg) &&
+        inIds.every(id => remBox.some(m => m.to.id === id)), "24 hours before, everyone who's in gets a reminder (and the organizer)");
+  check(remBox.some(m => m.to.id !== remOrg && /Tomorrow: Rock climbing/.test(m.subject) && /You said you're in/.test(m.body)),
+    "saying it's tomorrow, and that they said they're in");
+  check(!remBox.some(m => !inIds.includes(m.to.id) && m.to.id !== remOrg), "nobody who isn't in");
+  check((await runNudges(new Date("2030-04-19T10:00:00Z"))) === 0, "and only once");
+  check(!C.needsReminder({ locked_option_id: "o", created_at: "2030-04-19T12:00:00Z" }, [{ id: "o", starts_at: "2030-04-19T19:00" }],
+    new Date("2030-04-19T13:00:00Z")), "a plan made the day of doesn't get one");
+
+  console.log("\n=== canceling ===");
+  const cancelByOther = await api("/squadup/api/cancel", { token: danielle.token, activity_id: A });
+  check(cancelByOther.status === 403, "only the creator can call it off");
+
+  await api("/squadup/api/cancel", { token: gin.token, activity_id: A, reason: "Quarry's flooded" });
+  const dead = await db.getActivity(A);
+  check(!!dead.canceled_at, "canceling marks the activity off");
+
+  const rsvpAfter = await api("/squadup/api/rsvp", {
+    token: danielle.token, activity_id: A, option_id: primary.id
+  });
+  check(rsvpAfter.status === 400, "you can't RSVP to something that's off");
+  const cancelPage = await getPage(`/squadup/a/${A}`);
+  check(cancelPage.text.includes("Quarry&#39;s flooded"),
+    "the reason shows on the page, with the apostrophe escaped");
+
+  console.log("\n=== user text can't inject markup ===");
+  const xss = await api("/squadup/api/activity", {
+    token: danielle.token, title: "<script>alert(1)</script>", tag_name: "Beach",
+    primary: "2030-06-01T10:00"
+  });
+  const xssPage = await getPage(`/squadup/a/${xss.body.id}`);
+  check(!xssPage.text.includes("<script>alert(1)</script>"),
+    "a script tag in a title is escaped, not rendered");
+  check(xssPage.text.includes("&lt;script&gt;"), "and shows as literal text instead");
+
+  console.log("\n=== activities ===");
+  // record every notification from here on
+  const outbox = [];
+  const realSend = notifier.send.bind(notifier);
+  notifier.send = async (person, msg) => { outbox.push({ to: person.name, ...msg }); return realSend(person, msg); };
+  const danP = await db.getPersonByToken(danielle.token);
+  const raifP = await db.getPersonByEmail("raif@x.test");
+  const willP = await db.getPersonByEmail("will@x.test");
+  const made1 = await api("/squadup/api/tag-new", { token: danielle.token, name: "  Beach   day ", note: "Somewhere new" });
+  check(made1.status === 200 && made1.body.name === "Beach day" && !made1.body.existed, "anyone can add an activity (spaces tidied)");
+  const BD = made1.body.id;
+  check(outbox.length === 0, "adding one messages nobody");
+  check((await db.listSubscriptions(danP.id)).includes(BD) && (await db.getTag(BD)).note === "Somewhere new",
+    "whoever adds it is interested, and the note is kept");
+  const again1 = await api("/squadup/api/tag-new", { token: will.token, name: "beach DAY" });
+  check(again1.body.existed === true && again1.body.id === BD && (await db.subscribersOfTag(BD)).length === 2,
+    "adding a name that's already there just makes you interested in it");
+  check((await api("/squadup/api/tag-new", { token: will.token, name: "  " })).status === 400, "an activity needs a name");
+
+  let raifHome = (await getPage(`/squadup/p/${raif.token}`)).text;
+  check(raifHome.includes('id="activities"') && raifHome.includes(`id="act-${BD}"`) &&
+    raifHome.includes('Beach day <span class="newtag">New</span>'), "it shows on everyone's page, marked New");
+  check(raifHome.indexOf('id="activities"') > raifHome.indexOf("Paintball"), "Activities sit after the plans");
+  check(raifHome.includes(`data-int="${BD}" data-on="1"`) && !raifHome.includes(`data-bell="${BD}"`),
+    "with I'm interested, and no bell until you are");
+  check(raifHome.includes(`/squadup/start?t=${raif.token}&amp;tag=${BD}`), "and Schedule it");
+  const card = raifHome.slice(raifHome.indexOf(`id="act-${BD}"`), raifHome.indexOf(`id="act-${BD}"`) + 3000);
+  check(/<summary>2 interested<\/summary>/.test(card) && card.includes(">Danielle<") && card.includes(">Will<"),
+    "a dropdown shows who's interested");
+  check(!raifHome.includes('id="ideas"') && !raifHome.includes("Your categories") && !raifHome.includes("Let&#39;s do this sometime"),
+    "no separate ideas or categories sections any more");
+  await api("/squadup/api/interest", { token: raif.token, tag_id: BD, on: true });
+  await api("/squadup/api/interest", { token: raif.token, tag_id: BD, on: true });
+  check((await db.subscribersOfTag(BD)).filter(x => x.id === raifP.id).length === 1, "tapping twice counts once");
+  raifHome = (await getPage(`/squadup/p/${raif.token}`)).text;
+  check(raifHome.includes(`data-bell="${BD}"`) && raifHome.includes("Interested ✓") && !raifHome.includes('Beach day <span class="newtag">'),
+    "once you're interested: the bell shows, and it's not New to you any more");
+  check(raifHome.indexOf(`id="act-${BD}"`) < raifHome.indexOf("+ New activity"), "yours come first");
+  check(outbox.length === 0, "being interested messages nobody");
+
+  console.log("\n=== the bell ===");
+  const muteW = await api("/squadup/api/interest", { token: will.token, tag_id: BD, muted: true });
+  check(muteW.status === 200 && muteW.body.muted === true && (await db.subscribersOfTag(BD)).find(x => x.id === willP.id)._muted,
+    "the bell turns messages off");
+  check((await db.subscribersOfTag(BD)).some(x => x.id === willP.id), "but keeps you on the list");
+  const willHome = (await getPage(`/squadup/p/${will.token}`)).text;
+  check(new RegExp(`class="bell" data-bell="${BD}"`).test(willHome) && willHome.includes("Messages off. You're still on the list."),
+    "the page shows the bell off");
+  check((await api("/squadup/api/interest", { token: gin.token, tag_id: BD, muted: true })).status === 400,
+    "you can't turn off a bell for something you're not interested in");
+  const sched = await api("/squadup/api/activity", { token: raif.token, title: "Beach day", tag_id: BD, primary: "2030-07-11T10:00" });
+  check(sched.status === 200, "anyone can schedule it");
+  check(outbox.some(m => m.to === "Danielle" && /Raif put up Beach day/.test(m.body)), "everyone interested hears about the plan");
+  check(!outbox.some(m => m.to === "Will"), "except people with the bell off");
+  check(!outbox.some(m => m.to === "Raif"), "and not the person who posted it");
+  check((await getPage(`/squadup/p/${will.token}`)).text.includes(`/squadup/a/${sched.body.id}?`),
+    "the plan still shows on their page");
+  outbox.length = 0;
+  const pollM = await api("/squadup/api/poll", { token: raif.token, title: "Beach again", tag_id: BD, options: [{ day: "2030-08-02" }] });
+  check(pollM.status === 200 && outbox.some(m => m.to === "Danielle") && !outbox.some(m => m.to === "Will"),
+    "Find a time works the same way");
+  await api("/squadup/api/interest", { token: will.token, tag_id: BD, muted: false });
+  outbox.length = 0;
+  await api("/squadup/api/activity", { token: raif.token, title: "Beach day", tag_id: BD, primary: "2030-07-18T10:00" });
+  check(outbox.some(m => m.to === "Will"), "bell back on: they hear about the next one");
+  await api("/squadup/api/interest", { token: will.token, tag_id: BD, muted: true });
+  outbox.length = 0;
+
+  console.log("\n=== schedule it ===");
+  const stPg = (await getPage(`/squadup/start?t=${gin.token}&tag=${BD}`)).text;
+  check(stPg.includes("Schedule Beach day") && stPg.includes(`/squadup/new?t=${gin.token}&amp;tag=${BD}`) &&
+    stPg.includes(`/squadup/find?t=${gin.token}&amp;tag=${BD}`), "Schedule it asks when, carrying the activity along");
+  const np = (await getPage(`/squadup/new?t=${gin.token}&tag=${BD}`)).text;
+  check(np.includes('value="Beach day"') && np.includes(`value="${BD}" selected`), "the plan form comes with the activity picked");
+  check(/Interested: /.test(np) && np.includes("Danielle") && np.includes("Raif") && /2 of them will get a message/.test(np) &&
+    /One has the bell off/.test(np), "and says who's interested and who'll get a message");
+  const fp = (await getPage(`/squadup/find?t=${gin.token}&tag=${BD}`)).text;
+  check(fp.includes(`value="${BD}" selected`) && /Interested: /.test(fp), "Find a time too");
+  check(np.includes("<label for=\"tag\">Activity</label>") && np.includes("New activity…"), "the picker says Activity");
+
+  console.log("\n=== changing an activity ===");
+  check((await getPage(`/squadup/p/${danielle.token}`)).text.includes(`data-actedit="${BD}"`), "whoever added it gets Edit");
+  check(!raifHome.includes(`data-actedit="${BD}"`), "nobody else does");
+  check((await api("/squadup/api/tag-edit", { token: will.token, tag_id: BD, name: "Hijacked" })).status === 403,
+    "someone else can't change it");
+  const ren = await api("/squadup/api/tag-edit", { token: danielle.token, tag_id: BD, name: "Beach day at Lovers Key", note: "Bring a cooler" });
+  check(ren.status === 200 && (await db.getTag(BD)).name === "Beach day at Lovers Key" && (await db.getTag(BD)).note === "Bring a cooler",
+    "the person who added it can rename it and change the note");
+  check((await db.subscribersOfTag(BD)).length === 3 && outbox.length === 0, "renaming keeps who's interested and messages nobody");
+  const AX = (await api("/squadup/api/tag-new", { token: danielle.token, name: "Axe throwing" })).body.id;
+  check((await api("/squadup/api/tag-edit", { token: danielle.token, tag_id: BD, name: "axe throwing" })).status === 409,
+    "two activities can't share a name");
+  const rmAx = await api("/squadup/api/tag-edit", { token: danielle.token, tag_id: AX, remove: true });
+  check(rmAx.status === 200 && !(await db.getTag(AX)) && !(await getPage(`/squadup/p/${raif.token}`)).text.includes("Axe throwing"),
+    "one that was never used is deleted, and comes off everyone's page");
+  const rmBD = await api("/squadup/api/tag-edit", { token: danielle.token, tag_id: BD, remove: true });
+  check(rmBD.status === 200 && !!(await db.getTag(BD)).archived_at && !(await getPage(`/squadup/p/${raif.token}`)).text.includes(`id="act-${BD}"`),
+    "one with plans comes off the list but isn't deleted");
+  check((await getPage(`/squadup/a/${sched.body.id}?t=${raif.token}`)).text.includes("Beach day at Lovers Key"),
+    "its past plans keep it");
+  check(!(await getPage(`/squadup/new?t=${raif.token}`)).text.includes(`value="${BD}"`), "and it's gone from the picker");
+  await api("/squadup/api/activity", { token: raif.token, title: "Beach again", tag_name: "beach day at lovers key", primary: "2030-09-11T10:00" });
+  check(!(await db.getTag(BD)).archived_at, "using its name again brings it back");
+  // older activities nobody is down as adding: any member can tidy them
+  const legacy = await db.createTag({ name: "Old favorite", created_by: null });
+  check((await getPage(`/squadup/p/${raif.token}`)).text.includes(`data-actedit="${legacy.id}"`), "any member can edit one with no maker");
+  check((await api("/squadup/api/idea", { token: raif.token, title: "x", tag_name: "y" })).status === 410,
+    "the old ideas address says to reload");
+  const xssA = await api("/squadup/api/tag-new", { token: danielle.token, name: "<img src=x onerror=alert(1)>" });
+  const xssDash = (await getPage(`/squadup/p/${danielle.token}`)).text;
+  check(xssA.status === 200 && !xssDash.includes("<img src=x") && xssDash.includes("&lt;img src=x"), "activity names are escaped on the page");
+  await api("/squadup/api/tag-edit", { token: danielle.token, tag_id: xssA.body.id, remove: true });
+
+  console.log("\n=== ideas move into Activities ===");
+  const S0 = require("./server/index.js");
+  const ginP = await db.getPersonByToken(gin.token);
+  const oldGuest = await db.createPerson({ name: "Xavi Guest", confirmed: false });
+  const kay1 = await db.createIdea({ creator_id: ginP.id, title: "Kayaking trip", tag_id: BD, note: "Mangroves" });
+  await db.addIdeaMember(kay1.id, ginP.id); await db.addIdeaMember(kay1.id, willP.id); await db.addIdeaMember(kay1.id, oldGuest.id);
+  const same1 = await db.createIdea({ creator_id: raifP.id, title: "beach DAY at lovers key", tag_id: BD });
+  await db.addIdeaMember(same1.id, raifP.id); await db.addIdeaMember(same1.id, danP.id);
+  const faded = await db.createIdea({ creator_id: ginP.id, title: "Long gone", tag_id: BD });
+  await db.updateIdea(faded.id, { created_at: new Date(Date.now() - 200 * 864e5).toISOString(), last_joined_at: null });
+  const rep = await S0.ideasToActivities();
+  check(rep.moved === 2 && rep.made === 1, `live ideas move over (${rep.moved} moved, ${rep.made} new)`);
+  const kt = await db.getTagByName("Kayaking trip");
+  const kSubs = (await db.subscribersOfTag(kt.id)).map(x => x.id).sort().join();
+  check(kt && kt.created_by === ginP.id && kt.note === "Mangroves" && kSubs === [ginP.id, willP.id, oldGuest.id].sort().join(),
+    "an idea becomes an activity, with everyone who was in (guests too) interested");
+  check(!(await db.subscribersOfTag(kt.id)).some(x => x._muted), "with the bell on");
+  check((await db.subscribersOfTag(BD)).some(x => x.id === raifP.id), "an idea with an activity's name joins that one");
+  check(!!(await db.getIdea(kay1.id)).archived_at && !(await db.getTagByName("Long gone")), "ideas come off the old list; faded ones don't move");
+  check((await S0.ideasToActivities()).moved === 0, "running it again does nothing");
+  notifier.send = realSend;
+
+  console.log("\n=== links and identity ===");
+  const feed = await getPage(`/squadup/p/${gin.token}`);
+  check(feed.status === 200 && feed.text.includes("Paintball"),
+    "the personal page lists what you're subscribed to");
+
+  const junk = await getPage("/squadup/p/not-a-real-token");
+  check(junk.status === 404, "an unknown link is refused");
+
+  const reset = await api("/squadup/api/reset-link", { token: gin.token });
+  check(reset.status === 200, "you can replace your own link");
+  const oldLink = await getPage(`/squadup/p/${gin.token}`);
+  check(oldLink.status === 404, "and the old one stops working immediately");
+
+  const forged = await api("/squadup/api/activity", {
+    token: "made-up", title: "Nope", tag_name: "Nope", primary: "2030-01-01T10:00"
+  });
+  check(forged.status === 403, "a made-up token can't post");
+
+  console.log("\n=== location, creator auto-in, signed-in email links ===");
+  const sent = [];
+  const realSend2 = notifier.send;
+  notifier.send = async (p, m) => { sent.push({ to: p, ...m }); return { ok: true }; };
+  // links may have been replaced above -- pick up the current ones
+  gin.token = (await db.getPersonByEmail("gin@x.test")).personal_token;
+  danielle.token = (await db.getPersonByEmail("em@x.test")).personal_token;
+  const danielleId = (await db.getPersonByToken(danielle.token)).id;
+  const ginId = (await db.getPersonByToken(gin.token)).id;
+
+  const pk = await api("/squadup/api/activity", {
+    token: gin.token, title: "Pickleball", location: "  Josh's place ", tag_name: "Pickleball",
+    primary: "2030-06-06T18:00", backup: "2030-06-07T18:00"
+  });
+  const PK = pk.body.id;
+  let pkA = await db.getActivity(PK);
+  check(pkA.location === "Josh's place", "location is saved (trimmed)");
+  check(C.fullTitle(pkA) === "Pickleball at Josh's place", "it reads as 'Pickleball at Josh's place'");
+  check(C.fullTitle({ title: "Pickleball", location: null }) === "Pickleball", "no location, no 'at'");
+  let pkOpts = (await db.listOptions(PK)).sort((x, y) => x.starts_at.localeCompare(y.starts_at));
+  let ginR = (await db.listResponses(PK)).find(r => r.person_id === ginId);
+  check(ginR && ginR.option_ids.length === 2 && ginR.can_make_it,
+    "whoever posts it is marked available for both of their times");
+
+  const toEm = sent.find(m => m.to.id === danielleId);
+  check(toEm && toEm.subject.startsWith("Pickleball at Josh's place"), "the email title includes the place");
+  check(toEm && toEm.url.includes(`?t=${encodeURIComponent(danielle.token)}`),
+    "the email's link signs Danielle in");
+  check(toEm && toEm.actions.length === 4 && toEm.actions.every(a => a.url.includes("/r/") &&
+    a.url.includes(encodeURIComponent(danielle.token))), "it has one-tap buttons: each time, both, can't make it");
+  check(!sent.some(m => m.to.id === ginId), "the poster doesn't get their own announcement");
+
+  console.log("\n=== one-tap answers ===");
+  const firstBtn = new URL(toEm.actions[0].url);
+  const landing = await fetch(B + firstBtn.pathname + firstBtn.search).then(r => r.text());
+  check(landing.includes("Saving") && !(await db.listResponses(PK)).some(r => r.person_id === danielleId),
+    "just opening the link changes nothing (mail scanners can't answer for you)");
+  const doIt = (who, what) => api("/squadup/api/reply", { token: who.token, activity_id: PK, do: what });
+  let rr = await doIt(danielle, firstBtn.searchParams.get("do"));
+  let emR = () => db.listResponses(PK).then(rs => rs.find(r => r.person_id === danielleId));
+  check(rr.body.saved === "in" && (await emR()).option_ids.join() === pkOpts[0].id,
+    "tapping a time saves it");
+  await doIt(danielle, firstBtn.searchParams.get("do"));
+  check((await emR()).option_ids.length === 1, "tapping the same button twice doesn't undo it");
+  await doIt(danielle, "no");
+  check((await emR()).can_make_it === false && !(await emR()).option_ids.length, "Can't make it saves");
+  await doIt(danielle, "all");
+  check((await emR()).option_ids.length === 2 && (await emR()).can_make_it, "Both work saves both");
+  const savedPage = await getPage(`/squadup/a/${PK}?t=${danielle.token}&saved=in`);
+  check(savedPage.text.includes("Saved. You&#39;re in."), "the plan page confirms it");
+  check(savedPage.text.includes('Pickleball <span class="at">at Josh&#39;s place</span>'),
+    "the plan page shows the place in the title");
+  check((await doIt(danielle, "opt:nonsense")).status === 400, "a stale button explains itself");
+
+  console.log("\n=== suggest and approve from email ===");
+  sent.length = 0;
+  await api("/squadup/api/suggest", { token: danielle.token, activity_id: PK, starts_at: "2030-06-08T10:00" });
+  const toGin = sent.find(m => m.to.id === ginId);
+  const approveDo = toGin && new URL(toGin.actions[0].url).searchParams.get("do");
+  check(approveDo && approveDo.startsWith("approve:"), "the organizer's email has an Add it button");
+  check((await doIt(danielle, approveDo)).status === 403, "nobody else can use it");
+  sent.length = 0;
+  check((await doIt(gin, approveDo)).body.saved === "added", "the organizer adds it in one tap");
+  const added = await db.getOption(approveDo.slice(8));
+  check(added.status === "approved", "the time is now on the board");
+  const newTimeMail = sent.find(m => m.to.id === danielleId);
+  check(newTimeMail && newTimeMail.actions[0].url.includes("opt%3A" + added.id),
+    "everyone else gets a one-tap 'works for me' for the new time");
+
+  console.log("\n=== editing ===");
+  check((await getPage(`/squadup/edit/${PK}?t=${danielle.token}`)).status === 403, "only the creator can open edit");
+  const editPage = await getPage(`/squadup/edit/${PK}?t=${gin.token}`);
+  check(editPage.status === 200 && editPage.text.includes('value="Josh&#39;s place"') &&
+    editPage.text.includes('value="2030-06-06T18:00"'), "the edit form comes pre-filled");
+  const planPage = await getPage(`/squadup/a/${PK}?t=${gin.token}`);
+  check(planPage.text.includes(`/squadup/edit/${PK}?t=`), "the creator sees an Edit button");
+  check(!(await getPage(`/squadup/a/${PK}?t=${danielle.token}`)).text.includes("/squadup/edit/"),
+    "nobody else does");
+
+  const base = { token: gin.token, activity_id: PK, title: "Pickleball", location: "Josh's place",
+    tag_id: pkA.tag_id, primary: "2030-06-06T18:00", backup: "2030-06-07T18:00", note: "" };
+  check((await api("/squadup/api/activity-edit", { ...base, token: danielle.token })).status === 403,
+    "nobody else can save edits");
+  sent.length = 0;
+  let ed = await api("/squadup/api/activity-edit", { ...base, title: "Pickleball doubles", note: "Bring water" });
+  check(ed.status === 200 && ed.body.notified === false && sent.length === 0,
+    "renaming and notes save quietly");
+  check((await db.getActivity(PK)).title === "Pickleball doubles", "the new name sticks");
+
+  await db.updateActivity(PK, { finalize_nudge_sent_at: new Date().toISOString() });
+  sent.length = 0;
+  ed = await api("/squadup/api/activity-edit", { ...base, title: "Pickleball doubles", primary: "2030-06-13T18:00" });
+  const moved = sent.find(m => m.to.id === danielleId);
+  check(ed.body.notified && moved && moved.body.includes("Now Thu Jun 13, 6pm"),
+    "moving the time emails everyone who's in");
+  check(moved && moved.actions.some(a => a.label === "I'm in"), "with a one-tap answer for the new time");
+  pkOpts = await db.listOptions(PK);
+  const lockedId = (await db.getActivity(PK)).locked_option_id;
+  const plan = pkOpts.find(o => o.id === lockedId);
+  check(plan.starts_at === "2030-06-13T18:00", "the plan time moved");
+  check(!(await emR()).option_ids.includes(plan.id), "old answers for that time are cleared");
+  ginR = (await db.listResponses(PK)).find(r => r.person_id === ginId);
+  check(ginR.option_ids.includes(plan.id), "the creator stays in for it");
+  check(!(await db.getActivity(PK)).finalize_nudge_sent_at, "the day-before reminder is re-armed");
+
+  const backupOpt = pkOpts.find(o => o.kind === "backup");
+  sent.length = 0;
+  ed = await api("/squadup/api/activity-edit", { ...base, title: "Pickleball doubles",
+    primary: "2030-06-13T18:00", backup: "", location: "the Y" });
+  check(!(await db.getOption(backupOpt.id)), "clearing the backup removes that time");
+  check(!(await emR()).option_ids.includes(backupOpt.id), "and the answers for it");
+  const where = sent.find(m => m.to.id === danielleId);
+  check(where && where.body.includes("Now at the Y") && where.body.includes("backup"),
+    "a new place and a dropped backup are both in the email");
+  check((await api("/squadup/api/activity-edit", { ...base, backup: base.primary })).status === 400,
+    "a backup can't equal the main time");
+
+  console.log("\n=== past plans ===");
+  const today = C.toLocalStamp(new Date()).slice(0, 10);
+  const oldP = (await api("/squadup/api/activity", { token: gin.token, title: "Beach day",
+    location: "Lovers Key", tag_name: "Beach", primary: "2020-07-04T10:00" })).body.id;
+  const tonight = (await api("/squadup/api/activity", { token: gin.token, title: "Trivia",
+    tag_name: "Trivia", primary: today + "T00:01" })).body.id;
+  let home = await getPage(`/squadup/p/${gin.token}`);
+  check(!home.text.includes(`/squadup/a/${oldP}?`), "plans whose day has passed leave the home page");
+  check(home.text.includes(`/squadup/a/${tonight}?`), "a plan stays up through the day it happens");
+  check(home.text.includes(`/squadup/past?t=${gin.token}`), "the home page links to Past Plans");
+  check(home.text.includes('id="activities"') && home.text.includes("+ New activity"), "the home page has Activities");
+
+  sent.length = 0;
+  await api("/squadup/api/cancel", { token: gin.token, activity_id: PK, reason: "Rain" });
+  const offMail = sent.find(m => m.to.id === danielleId);
+  check(offMail && offMail.body.includes("deleted") && offMail.url.includes("?t="),
+    "deleting tells everyone who's in, with a signed-in link");
+  home = await getPage(`/squadup/p/${danielle.token}`);
+  check(!home.text.includes(`/squadup/a/${PK}?`), "deleted plans leave the home page");
+
+  check((await getPage("/squadup/past")).status === 403, "Past Plans needs your link");
+  const past = await getPage(`/squadup/past?t=${danielle.token}`);
+  check(past.text.includes(`/squadup/a/${oldP}?`) && !past.text.includes(`/squadup/a/${PK}?`),
+    "Past Plans has the plan that happened, not the deleted one");
+  check(!past.text.includes(">Deleted<") && past.text.includes("Jul 4, 2020"), "dated, and nothing marked deleted");
+  check((await getPage(`/squadup/a/${PK}?t=${danielle.token}`)).text.includes("This plan was deleted"),
+    "an old link to the deleted plan still opens and says so");
+  check(!past.text.includes(`/squadup/a/${tonight}?`), "today's plan isn't past yet");
+  check((await doIt(danielle, "all")).status === 400, "a deleted plan can't be answered");
+  check((await api("/squadup/api/rsvp", { token: danielle.token, activity_id: oldP,
+    option_id: (await db.listOptions(oldP))[0].id })).status === 400, "neither can one that's over");
+  const oldPage = await getPage(`/squadup/a/${oldP}?t=${danielle.token}`);
+  check(oldPage.text.includes("This happened Jul 4, 2020") && !oldPage.text.includes("data-vote=\""),
+    "a finished plan's page says so and has no answer buttons");
+
+  const againPg = await getPage(`/squadup/new?t=${danielle.token}&again=${oldP}`);
+  check(againPg.text.includes("Do it again") && againPg.text.includes('value="Beach day"') &&
+    againPg.text.includes('value="Lovers Key"') && !againPg.text.includes('value="2020-07-04'),
+    "Do it again copies everything but the time");
+  notifier.send = realSend2;
+
+  console.log("\n=== email rendering ===");
+  const N = require("./lib/notify.js");
+  const msg = { subject: "Pickleball at Josh's <place>", body: "Gin put it up.", url: "https://x/a/1?t=k",
+    actions: [{ label: "I'm in", url: "https://x/r/1?t=k&do=opt%3A1" },
+              { label: "Can't make it", url: "https://x/r/1?t=k&do=no", quiet: true }] };
+  const h = N.renderHtml(msg, "https://x/p/k");
+  check(h.includes("&lt;place&gt;") && !h.includes("<place>"), "email HTML is escaped");
+  check(h.includes('href="https://x/r/1?t=k&amp;do=opt%3A1"'), "email buttons link to the one-tap page");
+  check(N.renderText(msg, "").includes("Can't make it: https://x/r/1?t=k&do=no"),
+    "the plain-text version lists the buttons too");
+
+  console.log("\n=== invites ===");
+  const inbox = [];
+  const realSend3 = notifier.send;
+  notifier.send = async (p, m) => { inbox.push({ to: p, ...m }); return { ok: true }; };
+  will.token = (await db.getPersonByEmail("will@x.test")).personal_token;
+  raif.token = (await db.getPersonByEmail("raif@x.test")).personal_token;
+  const willId = (await db.getPersonByToken(will.token)).id;
+  const raifId = (await db.getPersonByToken(raif.token)).id;
+  const cat = (await api("/squadup/api/activity", { token: danielle.token, title: "Catan", location: "Gin's",
+    tag_name: "Board games", primary: "2030-08-01T19:00", backup: "2030-08-02T19:00" })).body.id;
+  const catA = await db.getActivity(cat);
+  await db.setSubscription(raifId, catA.tag_id, false);
+  check(!(await getPage(`/squadup/p/${raif.token}`)).text.includes(`/squadup/a/${cat}?`),
+    "before an invite, Raif (not into board games) doesn't see it");
+
+  let cp = await getPage(`/squadup/a/${cat}?t=${danielle.token}`);
+  check(cp.text.includes("Into Board games") && cp.text.includes("Everyone else"),
+    "the picker splits people into the category's fans and everyone else");
+  check(cp.text.indexOf(`data-invitee="${willId}"`) < cp.text.indexOf("Everyone else") &&
+    cp.text.indexOf(`data-invitee="${raifId}"`) > cp.text.indexOf("Everyone else"),
+    "people into the category come first");
+  check(!cp.text.includes(`data-invitee="${danielleId}"`), "you can't invite yourself (or the creator)");
+  check(!(await getPage(`/squadup/a/${cat}`)).text.includes('id="invited"'),
+    "signed-out visitors don't see the invite list");
+
+  inbox.length = 0;
+  let iv = await api("/squadup/api/invite", { token: danielle.token, activity_id: cat, person_ids: [raifId, willId, raifId] });
+  check(iv.status === 200 && iv.body.invited === 2 && iv.body.emailed === 2, "inviting two people emails both once");
+  const rInv = inbox.find(m => m.to.id === raifId);
+  check(rInv && rInv.subject === "Danielle invited you: Catan at Gin's", "the invite says who and what");
+  check(rInv && rInv.url.includes(encodeURIComponent(raif.token)) && rInv.actions.length === 4,
+    "it signs them in and has one-tap answers");
+  inbox.length = 0;
+  iv = await api("/squadup/api/invite", { token: will.token, activity_id: cat, person_ids: [raifId] });
+  check(iv.body.invited === 0 && inbox.length === 0, "inviting someone already invited sends nothing");
+  check((await api("/squadup/api/invite", { token: danielle.token, activity_id: cat, person_ids: [danielleId] })).status === 400,
+    "inviting only yourself is refused");
+  check((await getPage(`/squadup/p/${raif.token}`)).text.includes(`/squadup/a/${cat}?`),
+    "once invited, it's on their home page");
+
+  await api("/squadup/api/reply", { token: raif.token, activity_id: cat, do: "no" });
+  await api("/squadup/api/reply", { token: will.token, activity_id: cat, do: "all" });
+  cp = await getPage(`/squadup/a/${cat}?t=${danielle.token}`);
+  check(/class="person out"[^>]*>Raif ✗/.test(cp.text) && /class="person in"[^>]*>Will ✓/.test(cp.text),
+    "the bottom of the plan lists who's invited and how they answered");
+  check(!cp.text.includes(`data-invitee="${raifId}"`), "invited people drop out of the picker");
+
+  inbox.length = 0;
+  await api("/squadup/api/activity-edit", { token: danielle.token, activity_id: cat, title: "Catan",
+    location: "Gin's", tag_id: catA.tag_id, primary: "2030-08-08T19:00", backup: "2030-08-02T19:00" });
+  check(inbox.some(m => m.to.id === raifId), "invited people hear about changes, whatever they follow");
+
+  const tooMany = Array.from({ length: 41 }, (_, i) => "nobody-" + i);
+  check((await api("/squadup/api/invite", { token: danielle.token, activity_id: cat, person_ids: tooMany })).status === 429,
+    "one person can't send more than 40 invites a day");
+  await api("/squadup/api/cancel", { token: danielle.token, activity_id: cat });
+  check((await api("/squadup/api/invite", { token: danielle.token, activity_id: cat, person_ids: [ginId] })).status === 400,
+    "no inviting to a deleted plan");
+  notifier.send = realSend3;
+
+  console.log("\n=== send limits ===");
+  const L_NT = require("./lib/notify.js");
+  const L_fake = { kind: "email", got: [], async send(p) { this.got.push(p.id); } };
+  const freshDb = () => require("./lib/db.js").fileAdapter(null);
+  const L_g = L_NT.makeGuard(freshDb(), { email: { perPerson: 2, links: 1, total: 3 } });
+  const L_pA = { id: "limit-a", email: "a@x", confirmed_at: "2030-01-01" }, L_pB = { id: "limit-b", email: "b@x", confirmed_at: "2030-01-01" };
+  const L_msgFn = () => ({ subject: "s", body: "b" });
+  for (let i = 0; i < 3; i++) await L_NT.notifyAll(L_fake, [L_pA], L_msgFn, { guard: L_g });
+  check(L_fake.got.filter(x => x === "limit-a").length === 2, "no one person gets more than their daily cap");
+  const L_r2 = await L_NT.notifyAll(L_fake, [L_pB, L_pB], L_msgFn, { guard: L_g });
+  check(L_r2.length === 1 && L_r2.held === 1, "the overall daily cap stops everything past it, and says how many were held");
+  const L_g2 = L_NT.makeGuard(freshDb(), { email: { perPerson: 50, links: 1, total: 500 } });
+  const L_pC = { id: "limit-c", email: "c@x", confirmed_at: "2030-01-01" };
+  await L_NT.notifyAll(L_fake, [L_pC], L_msgFn, { guard: L_g2, kind: "link" });
+  const L_r3 = await L_NT.notifyAll(L_fake, [L_pC], L_msgFn, { guard: L_g2, kind: "link" });
+  const L_r4 = await L_NT.notifyAll(L_fake, [L_pC], L_msgFn, { guard: L_g2 });
+  check(L_r3.held === 1 && L_r4.length === 1, "\"here's your link\" has its own small cap; other mail still goes");
+  const L_broken = { countSends: async () => { throw new Error("db down"); }, logSend: async () => { throw new Error("db down"); } };
+  const L_g3 = L_NT.makeGuard(L_broken, { email: { perPerson: 1, links: 1, total: 10 } });
+  await L_NT.notifyAll(L_fake, [L_pA, L_pA], L_msgFn, { guard: L_g3 });
+  check(L_fake.got.filter(x => x === "limit-a").length === 3, "if the database is down, an in-memory count still enforces the caps");
+
+  for (let i = 0; i < 5; i++) await api("/squadup/api/signup", { name: "Spammed", email: "L_victim@x.test" });
+  const L_victim = await db.getPersonByEmail("L_victim@x.test");
+  const L_linkSends = await db.countSends({ channel: "email", sinceIso: new Date(Date.now() - 864e5).toISOString(),
+    person_id: L_victim.id, kind: "link" });
+  check(L_linkSends === 3, `typing someone's email into the join form over and over sends at most 3 a day (sent ${L_linkSends})`);
+  const dflt = JSON.parse(require("child_process").execFileSync(process.execPath,
+    ["-e", "console.log(JSON.stringify(require('./lib/notify.js').LIMITS))"],
+    { cwd: __dirname, env: { PATH: process.env.PATH } }).toString());
+  check(dflt.email.total <= 100 && dflt.email.perPerson === 15 && dflt.email.links === 3,
+    "out of the box: 15 emails per person and 95 total a day (Resend's free tier is 100)");
+
+  console.log("\n=== inviting someone new (email only, texting off) ===");
+  const NN = require("./lib/notify.js");
+  const box = [];
+  const realSend4 = notifier.send;
+  notifier.send = async (p, m) => { box.push({ to: p, ...m }); return { ok: true }; };
+  const bbq = (await api("/squadup/api/activity", { token: gin.token, title: "BBQ", location: "the lake house",
+    tag_name: "BBQ", primary: "2030-09-12T17:00", backup: "2030-09-13T17:00" })).body.id;
+  const bbqTag = (await db.getActivity(bbq)).tag_id;
+  // Adding someone by phone or email is gone (people join with their own
+  // number now), but people a friend added before then are still around.
+  // This makes one the old way, then invites them like any member.
+  const inviteNew = async (who, fields) => {
+    const by = await db.getPersonByToken(who.token);
+    const per = await db.createPerson({ name: fields.name, email: fields.email || null,
+      phone: fields.phone ? C.normalizePhone(fields.phone) : null, invited_by: by.id, confirmed: false });
+    const r = await api("/squadup/api/invite", { token: who.token, activity_id: bbq, person_ids: [per.id] });
+    return { status: r.status, body: { ...r.body, isNew: true } };
+  };
+  check((await api("/squadup/api/invite-new", { token: gin.token, activity_id: bbq, name: "X", email: "x@x.test" })).status === 410,
+    "adding someone new by phone or email is gone: send them the link instead");
+
+  box.length = 0;
+  let nv = await inviteNew(gin, { name: "Tresa", email: "tresa@x.test", phone: "" });
+  const tresa = await db.getPersonByEmail("tresa@x.test");
+  check(nv.status === 200 && nv.body.isNew && tresa && tresa.invited_by === ginId && !tresa.confirmed_at,
+    "a new person is added, marked as invited by Gin and not yet confirmed");
+  const tMail = box.find(m => m.to.id === tresa.id);
+  check(tMail && tMail.subject === "Gin invited you: BBQ at the lake house" && /Squad Up is how Gin's friends/.test(tMail.body),
+    "they get an invite that explains what Squad Up is");
+  check(tMail && tMail.actions.length === 4 && tMail.url.includes(encodeURIComponent(tresa.personal_token)),
+    "with one-tap answers and a link that signs them in");
+  check((await db.subscribersOfTag(bbqTag)).every(x => x.id !== tresa.id), "they don't follow any categories yet");
+  check(/only message you'll get from us unless you say you're in/.test(tMail.body),
+    "the invite tells them it's the only message unless they say they're in");
+  check(!!(await db.getPerson(tresa.id)).invite_sent_at, "their one invite is recorded");
+  check(!(await db.listResponses(bbq)).some(r => r.person_id === tresa.id), "nothing is answered for them");
+  const bowl = (await api("/squadup/api/activity", { token: danielle.token, title: "Bowling", tag_name: "Bowling night", primary: "2030-09-20T19:00" })).body.id;
+  const bowlTag = (await db.getTagByName("Bowling night")).id;
+  check(!(await db.subscribersOfTag(bowlTag)).some(x => x.id === tresa.id),
+    "a brand-new category doesn't sweep in people who haven't answered");
+
+  console.log("\n=== one message until they opt in ===");
+  box.length = 0;
+  const reInv = await api("/squadup/api/invite", { token: danielle.token, activity_id: bowl, person_ids: [tresa.id] });
+  check(reInv.status === 200 && reInv.body.invited === 1 && reInv.body.waiting === 1 && !box.some(m => m.to.id === tresa.id),
+    "a second invite before they've said yes is added to the plan but not sent");
+  check((await getPage(`/squadup/a/${bowl}?t=${danielle.token}&invited=1&waiting=1`)).text.includes("haven't said they're in yet"),
+    "and the inviter is told why");
+  box.length = 0;
+  await api("/squadup/api/activity-edit", { token: gin.token, activity_id: bbq, title: "BBQ", location: "the lake house",
+    tag_id: bbqTag, primary: "2030-09-11T18:00", backup: "2030-09-13T17:00" });
+  check(box.length > 0 && !box.some(m => m.to.id === tresa.id), "plan updates skip them too");
+  const tPage = await getPage(`/squadup/p/${tresa.personal_token}`);
+  check(tPage.text.includes("Want Squad Up messages?") && !(await db.getPerson(tresa.id)).confirmed_at,
+    "opening their page doesn't opt them in; it offers a button instead");
+
+  const tDo = new URL(tMail.actions[0].url).searchParams.get("do");
+  await api("/squadup/api/reply", { token: tresa.personal_token, activity_id: bbq, do: tDo });
+  const tresa2 = await db.getPerson(tresa.id);
+  check(!!tresa2.confirmed_at, "answering the invite makes them a full member");
+  check((await db.subscribersOfTag(bbqTag)).some(x => x.id === tresa.id), "and saying yes follows that category");
+  const tLater = await NN.notifyAll(notifier, [tresa2], () => ({ subject: "s", body: "b" }));
+  check(tLater.length === 1, "and from then on they get messages");
+  check(!(await getPage(`/squadup/p/${tresa.personal_token}`)).text.includes("Want Squad Up messages?"),
+    "and the opt-in button goes away");
+
+  for (let i = 0; i < 2; i++) await inviteNew(gin, { name: "Friend " + i, email: `friend${i}@x.test` });
+  const fr = await db.getPersonByEmail("friend0@x.test");
+  await api("/squadup/api/reply", { token: fr.personal_token, activity_id: bbq, do: "no" });
+  check(!(await db.getPerson(fr.id)).confirmed_at, "saying no doesn't opt them in");
+  const frQuiet = await NN.notifyAll(notifier, [await db.getPerson(fr.id)], () => ({ subject: "s", body: "b" }));
+  check(frQuiet.length === 0 && frQuiet.waiting === 1, "so nothing more reaches them");
+  const frLink = await NN.notifyAll(notifier, [await db.getPerson(fr.id)], () => ({ subject: "s", body: "b" }), { kind: "link" });
+  check(frLink.length === 1, "except a link they ask for themselves on the site");
+  check((await api("/squadup/api/optin", { token: fr.personal_token })).status === 400 && !(await db.getPerson(fr.id)).confirmed_at,
+    "the button does nothing unless the consent box is checked");
+  await api("/squadup/api/optin", { token: fr.personal_token, consent: true });
+  check(!!(await db.getPerson(fr.id)).confirmed_at, "the \"Get Squad Up messages\" button opts them in");
+  const fr1 = await db.getPersonByEmail("friend1@x.test");
+  await api("/squadup/api/subscribe", { token: fr1.personal_token, tag_id: bowlTag, on: true });
+  check(!!(await db.getPerson(fr1.id)).confirmed_at, "so does following a category");
+  check((await api("/squadup/api/signup", { name: "Pho Ne", phone: "2395550142" })).status === 400,
+    "signing up needs an email while texting is off");
+
+  console.log("\n=== stop all messages ===");
+  check((await getPage(`/squadup/stop?t=${tresa.personal_token}`)).text.includes("Stop all messages"), "the stop page asks first");
+  await api("/squadup/api/stop", { token: tresa.personal_token });
+  check(!!(await db.getPerson(tresa.id)).opted_out_at, "stopping is saved");
+  const quiet = await NN.notifyAll(notifier, [await db.getPerson(tresa.id)], () => ({ subject: "s", body: "b" }));
+  check(quiet.length === 0 && quiet.unreachable === 1, "they get nothing after that");
+  check((await getPage(`/squadup/p/${tresa.personal_token}`)).text.includes("Your messages are off"),
+    "their page says so, with a way back");
+  check(!(await getPage(`/squadup/a/${bbq}?t=${gin.token}`)).text.includes(`data-invitee="${tresa.id}"`),
+    "people who stopped messages drop out of the invite picker");
+  await api("/squadup/api/stop", { token: tresa.personal_token, off: false });
+  check(!(await db.getPerson(tresa.id)).opted_out_at, "and they can turn messages back on");
+  const footer = NN.renderHtml({ subject: "s", body: "b" }, "https://x/p/k", "https://x/stop?t=k");
+  check(footer.includes("Stop all Squad Up messages") && footer.includes("https://x/stop?t=k"),
+    "every email has a stop link at the bottom");
+
+  console.log("\n=== texting on: invites, replies, STOP ===");
+  const texts = [];
+  notifier.send = realSend4;
+  const realEmail = notifier.backends.email;
+  notifier.backends.email = { kind: "email", async send(p, m) { box.push({ to: p, ...m }); } };
+  notifier.backends.sms = { kind: "sms", async send(p, m) { texts.push({ to: p, text: NN.renderSms(m, NN.link(p)), m }); } };
+  const smsIn = async (from, text, sign = true, extra = {}) => {
+    const params = { From: from, Body: text, To: "+12395550000", MessageSid: "SM" + Math.random(), ...extra };
+    const r = await fetch(B + "/squadup/sms/inbound", { method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded",
+        "X-Twilio-Signature": sign ? NN.twilioSignature("test-twilio-token", process.env.SQUAD_BASE_URL + "/sms/inbound", params) : "nope" },
+      body: new URLSearchParams(params).toString() });
+    return { status: r.status, text: await r.text() };
+  };
+
+  texts.length = 0;
+  nv = await inviteNew(danielle, { name: "Todd", phone: "(239) 555-0177" });
+  const todd = await db.getPersonByPhone("+12395550177");
+  check(nv.status === 200 && todd && !todd.email, "with texting on, a phone number alone works (stored as +12395550177)");
+  const tText = texts.find(x => x.to.id === todd.id);
+  check(tText && /^Danielle invited you to BBQ at the lake house/.test(tText.text), "the invite goes out as a text");
+  check(tText && tText.text.includes("Reply 1 for") && tText.text.includes("BOTH or NO") && tText.text.includes("Reply STOP to opt out."),
+    "it says how to answer by text, and how to opt out");
+  check(tText && tText.text.includes(encodeURIComponent(todd.personal_token)), "and has their signed-in link");
+
+  check((await smsIn("+12395550177", "2", false)).status === 403, "a reply without Twilio's signature is refused");
+  let back = await smsIn("+1 (239) 555-0177", "2");
+  let toddR = (await db.listResponses(bbq)).find(r => r.person_id === todd.id);
+  const bbqOpts = (await db.listOptions(bbq)).sort((x, y) => x.starts_at.localeCompare(y.starts_at));
+  check(toddR && toddR.option_ids.join() === bbqOpts[1].id, "texting \"2\" picks the second time");
+  check(/<Message>Welcome to Squad Up by Extrarandom! Texts about your plans\. Msg frequency varies\. Msg&amp;data rates may apply\. Reply HELP for help, STOP to cancel\. Got it, you(&apos;|')re in/.test(back.text),
+    "and the reply text opens with the program name and disclosures, then confirms it");
+  check(tText && tText.text.includes("Reply STOP to opt out. Msg&data rates may apply."),
+    "the one-time invite text also says how to stop and that rates may apply");
+  check(tText && tText.text.includes("No more texts unless you say you're in."),
+    "the first text says it's the only one unless they say they're in");
+  check(!!(await db.getPerson(todd.id)).confirmed_at, "a texted answer makes them a member too");
+  await smsIn("+12395550177", "Both!");
+  toddR = (await db.listResponses(bbq)).find(r => r.person_id === todd.id);
+  check(toddR.option_ids.length === 2, "\"Both!\" takes both times");
+  await smsIn("+12395550177", "nope");
+  toddR = (await db.listResponses(bbq)).find(r => r.person_id === todd.id);
+  check(toddR.can_make_it === false, "\"nope\" means can't make it");
+  back = await smsIn("+12395550177", "what time is it");
+  check(back.text.includes("reply YES or NO"), "anything else gets a short how-to");
+  back = await smsIn("+19995550000", "yes");
+  check(back.text.includes("<Response></Response>"), "texts from unknown numbers get no reply");
+
+  await db.updatePerson(ginId, { phone: "+12395550001" });
+  texts.length = 0;
+  await api("/squadup/api/suggest", { token: todd.personal_token, activity_id: bbq, starts_at: "2030-09-14T17:00" });
+  const toGinText = texts.find(x => x.to.id === ginId);
+  check(toGinText && toGinText.text.includes("Reply ADD"), "the organizer can add a suggested time by text");
+  await smsIn("+12395550001", "add");
+  const addedOpt = (await db.listOptions(bbq)).find(o => o.starts_at === "2030-09-14T17:00");
+  check(addedOpt && addedOpt.status === "approved", "texting ADD puts it on the board");
+  const toddNew = texts.find(x => x.to.id === todd.id && x.text.includes("Reply YES or NO"));
+  check(!!toddNew, "and everyone gets a yes/no text for the new time");
+  await smsIn("+12395550177", "yes");
+  toddR = (await db.listResponses(bbq)).find(r => r.person_id === todd.id);
+  check(toddR.option_ids.includes(addedOpt.id) && toddR.option_ids.length === 1,
+    "a plain YES answers the last thing they were asked (the new time)");
+
+  nv = await inviteNew(danielle, { name: "Uma", phone: "239-555-0166" });
+  const uma = await db.getPersonByPhone("+12395550166");
+  back = await smsIn("+12395550166", "no");
+  check(!(await db.getPerson(uma.id)).confirmed_at && /We won(&apos;|')t text you again/.test(back.text),
+    "a texted NO from someone new isn't an opt-in, and the reply says we won't text again");
+  texts.length = 0;
+  await api("/squadup/api/activity-edit", { token: gin.token, activity_id: bbq, title: "BBQ", location: "the lake house",
+    tag_id: bbqTag, primary: "2030-09-12T19:00", backup: "2030-09-13T17:00" });
+  check(!texts.some(x => x.to.id === uma.id), "and they get nothing after that");
+  back = await smsIn("+12395550166", "yes");
+  check(!!(await db.getPerson(uma.id)).confirmed_at, "until they text YES");
+
+  await smsIn("+12395550177", "STOP");
+  check(!!(await db.getPerson(todd.id)).opted_out_at, "texting STOP turns everything off");
+  texts.length = 0;
+  await api("/squadup/api/activity-edit", { token: gin.token, activity_id: bbq, title: "BBQ", location: "the lake house",
+    tag_id: bbqTag, primary: "2030-09-19T17:00", backup: "2030-09-13T17:00" });
+  check(!texts.some(x => x.to.id === todd.id), "so changes don't reach them");
+  back = await smsIn("+12395550177", "START");
+  check(!(await db.getPerson(todd.id)).opted_out_at && /you(&apos;|')re back on/.test(back.text) && back.text.includes("Msg&amp;data rates may apply"),
+    "START turns it back on, with the disclosures");
+
+  console.log("\n=== consent wording and the public pages ===");
+  back = await smsIn("+12395550177", "HELP");
+  check(/Squad Up by Extrarandom/.test(back.text) && back.text.includes("GinZ@Extrarandom.com") &&
+        back.text.includes("Msg&amp;data rates may apply") && back.text.includes("Reply STOP to opt out"),
+    "HELP names the program, gives a support email, and says how to stop");
+  back = await smsIn("+12395550177", "HELP", true, { OptOutType: "HELP" });
+  check(back.text.includes("<Response></Response>"), "when Twilio already answered HELP, we stay quiet (no double reply)");
+  back = await smsIn("+12395550177", "START", true, { OptOutType: "START" });
+  check(back.text.includes("<Response></Response>") && !(await db.getPerson(todd.id)).opted_out_at,
+    "same for START, and it still turns them back on");
+
+  let c1 = await api("/squadup/api/signup", { name: "Nora", email: "nora@x.test", agree: false });
+  check(c1.status === 400 && /Terms/.test(c1.body.error), "signing up needs the Terms box ticked");
+  c1 = await api("/squadup/api/signup", { name: "Nora", phone: "239-555-0188", sms_consent: false });
+  check(c1.status === 400 && /Text me/.test(c1.body.error) && !(await db.getPersonByPhone("+12395550188")),
+    "a phone number needs the text box ticked, and nothing is saved without it");
+  c1 = await api("/squadup/api/signup", { name: "Nora", email: "nora@x.test", phone: "239-555-0188", sms_consent: false });
+  check(c1.status === 400, "even with an email, a phone number needs the box");
+  c1 = await api("/squadup/api/signup", { name: "Nora", email: "nora@x.test", sms_consent: false });
+  check(c1.status === 200, "email-only sign-up works without agreeing to texts");
+
+  texts.length = 0;
+  c1 = await api("/squadup/api/signup", { name: "Nan", phone: "239-555-0189" });
+  const nanT = texts.find(x => x.to.phone === "+12395550189");
+  check(c1.status === 200 && nanT && nanT.text.startsWith("Welcome to Squad Up by Extrarandom!") &&
+        /Msg&data rates may apply/.test(nanT.text) && /Reply HELP for help, STOP to cancel/.test(nanT.text) &&
+        /Msg frequency varies/.test(nanT.text),
+    "signing up with a phone sends the opt-in text, disclosures first");
+  check(nanT && nanT.text.indexOf("Welcome") < nanT.text.indexOf("http"), "and the link comes after the disclosures");
+
+  nv = await inviteNew(danielle, { name: "Vera", phone: "239-555-0133" });
+  const vera = await db.getPersonByPhone("+12395550133");
+  texts.length = 0;
+  await api("/squadup/api/optin", { token: vera.personal_token, consent: true });
+  const veraT = texts.find(x => x.to.id === vera.id);
+  check(veraT && veraT.text.startsWith("Welcome to Squad Up by Extrarandom!") && !!(await db.getPerson(vera.id)).confirmed_at,
+    "turning messages on from the home page sends the opt-in text");
+
+  process.env.SQUAD_FIRST_TEXT = "off";
+  texts.length = 0; box.length = 0;
+  nv = await inviteNew(danielle, { name: "Wes", email: "wes@x.test", phone: "239-555-0144" });
+  const wes = await db.getPersonByEmail("wes@x.test");
+  check(!texts.some(x => x.to.id === wes.id) && box.some(x => x.to.id === wes.id),
+    "with the first-text switch off, a brand-new person is emailed, not texted");
+  nv = await inviteNew(danielle, { name: "Xena", phone: "239-555-0145" });
+  const xena = await db.getPersonByPhone("+12395550145");
+  check(!texts.some(x => x.to.id === xena.id) && nv.body.unreachable === 1,
+    "and a new person with only a phone is left alone");
+  delete process.env.SQUAD_FIRST_TEXT;
+
+  const joinHtml = (await getPage("/squadup/join")).text;
+  check(/id="uagree"/.test(joinHtml) && /id="usms"/.test(joinHtml) && !/<input type="checkbox"[^>]*checked/.test(joinHtml),
+    "the join page has both checkboxes, and neither is pre-checked");
+  check(/Text me about Squad Up plans I'm invited to<\/b> \(invites, times, confirmations, reminders\)/.test(joinHtml) &&
+        /From Extrarandom/.test(joinHtml), "the text box says exactly what the texts are, and who they're from");
+  check(/msg &amp; data rates may apply/.test(joinHtml) && /Reply HELP for help, STOP to opt out/.test(joinHtml) &&
+        /Msg frequency varies/.test(joinHtml) && /href="\/squadup\/terms"/.test(joinHtml) && /href="\/squadup\/privacy"/.test(joinHtml),
+    "it states frequency, rates, HELP and STOP, and links the Terms and Privacy Policy");
+  const termsHtml = await getPage("/squadup/terms"), privHtml = await getPage("/squadup/privacy");
+  check(termsHtml.status === 200 && /Squad Up/.test(termsHtml.text) && /Message and data rates may apply/.test(termsHtml.text) &&
+        /<b>STOP<\/b>/.test(termsHtml.text) && /<b>HELP<\/b>/.test(termsHtml.text) && /GinZ@Extrarandom\.com/.test(termsHtml.text) &&
+        /not liable for delayed or undelivered/.test(termsHtml.text) && /href="\/squadup\/privacy"/.test(termsHtml.text) &&
+        /Limited to \d+ messages a day, and usually far fewer/.test(termsHtml.text),
+    "the Terms page has the program, frequency, rates, bold HELP and STOP, support contact, carrier line and Privacy link");
+  check(privHtml.status === 200 && /We do not sell or share your SMS opt-in data or personal information with third parties for marketing purposes/.test(privHtml.text) &&
+        /Twilio/.test(privHtml.text) && /GinZ@Extrarandom\.com/.test(privHtml.text),
+    "the Privacy page has the CTIA no-sharing line, names the providers, and gives a contact");
+  check(/href="\/squadup\/terms"/.test((await getPage("/squadup/p/" + gin.token.replace(/^.*\//, ""))).text),
+    "every page carries Terms and Privacy links");
+  check(/Squad Up <span class="with">with Gin<\/span>/.test(joinHtml), "the header reads \"Squad Up with Gin\"");
+
+  console.log("\n=== edit your info ===");
+  const homeHtml = (await getPage("/squadup/account?t=" + nan_token())).text;
+  function nan_token() { return c1.body.token; }
+  check(/>Edit your info</.test(homeHtml) && /id="mname"[^>]*value="Nan"/.test(homeHtml), "Your account has Edit your info, filled in");
+  let me1 = await api("/squadup/api/me", { token: c1.body.token, name: "Nan B", phone: "239-555-0189", email: "nan@x.test" });
+  let nanP = await db.getPersonByPhone("+12395550189");
+  check(me1.status === 200 && nanP.name === "Nan B" && nanP.email === "nan@x.test", "name and email can be changed");
+  me1 = await api("/squadup/api/me", { token: c1.body.token, name: "Nan B", phone: "239-555-0190", email: "nan@x.test" });
+  check(me1.status === 400 && /Text me/.test(me1.body.error) && (await db.getPerson(nanP.id)).phone === "+12395550189",
+    "a new number needs the Text me box, and nothing changes without it");
+  me1 = await api("/squadup/api/me", { token: c1.body.token, name: "Nan B", phone: "239-555-0190", email: "nan@x.test", sms_consent: true });
+  check(me1.status === 200 && (await db.getPerson(nanP.id)).phone === "+12395550190", "with the box ticked, the new number is saved");
+  me1 = await api("/squadup/api/me", { token: c1.body.token, name: "Nan B", phone: "239-555-0190", email: "nora@x.test" });
+  check(me1.status === 400 && /already on Squad Up/.test(me1.body.error), "someone else's email can't be taken");
+  me1 = await api("/squadup/api/me", { token: c1.body.token, name: " ", phone: "239-555-0190", email: "nan@x.test" });
+  check(me1.status === 400, "a blank name is refused");
+  check((await api("/squadup/api/me", { token: "nope", name: "X", email: "x@x.test" })).status === 403, "and it needs your own link");
+
+  console.log("\n=== tapping times quickly ===");
+  nv = await inviteNew(danielle, { name: "Quinn", email: "quinn@x.test" });
+  const quinn = await db.getPersonByEmail("quinn@x.test");
+  const bbqApproved = (await db.listOptions(bbq)).filter(o => o.status === "approved").map(o => o.id);
+  let rs = await api("/squadup/api/rsvp", { token: quinn.personal_token, activity_id: bbq, option_ids: bbqApproved.concat(bbqApproved[0], "bogus") });
+  let qr = (await db.listResponses(bbq)).find(r => r.person_id === quinn.id);
+  check(rs.status === 200 && qr.option_ids.length === bbqApproved.length, "the whole set saves at once, ignoring repeats and unknown ids");
+  check(!!(await db.getPerson(quinn.id)).confirmed_at, "tapping a time opts a new person in");
+  rs = await api("/squadup/api/rsvp", { token: quinn.personal_token, activity_id: bbq, option_ids: [] });
+  qr = (await db.listResponses(bbq)).find(r => r.person_id === quinn.id);
+  check(rs.status === 200 && qr.option_ids.length === 0, "and an empty set clears them");
+
+  console.log("\n=== texting paused until approval ===");
+  delete process.env.SQUAD_SMS_LIVE;
+  check(notifier.channelFor({ id: "z", phone: "+12395550111", email: "z@x.test" }) === "email",
+    "with SQUAD_SMS_LIVE off, someone with a phone and an email gets email");
+  check(notifier.channelFor({ id: "z2", phone: "+12395550112" }) === null, "and a phone-only person isn't texted");
+  const pausedJoin = (await getPage("/squadup/join")).text;
+  check(/Phone <span class="muted">\(Coming Soon\)<\/span>/.test(pausedJoin), "the phone box says (Coming Soon)");
+  c1 = await api("/squadup/api/signup", { name: "Paz", phone: "239-555-0113" });
+  check(c1.status === 400 && /coming soon/i.test(c1.body.error), "a phone-only sign-up is asked for an email too");
+  texts.length = 0; box.length = 0;
+  c1 = await api("/squadup/api/signup", { name: "Paz", phone: "239-555-0113", email: "paz@x.test" });
+  check(c1.status === 200 && !texts.length && box.some(x => x.to.email === "paz@x.test"),
+    "with both, the link goes by email and no text is sent");
+  check((await db.getPersonByEmail("paz@x.test")).phone === "+12395550113", "the number is still saved for later");
+  process.env.SQUAD_SMS_LIVE = "on";
+  texts.length = 0;
+  await api("/squadup/api/invite", { token: gin.token, activity_id: bbq, person_ids: [willId] });
+  await db.updatePerson(willId, { phone: "+12395550155" });
+  await api("/squadup/api/activity-edit", { token: gin.token, activity_id: bbq, title: "BBQ", location: "the lake house",
+    tag_id: bbqTag, primary: "2030-09-26T17:00", backup: "2030-09-13T17:00" });
+  check(texts.some(x => x.to.id === willId), "once texting is on, anyone with a phone number gets texts instead of email");
+
+  console.log("\n=== texting test mode ===");
+  const envKeep = { ...process.env };
+  Object.assign(process.env, { TWILIO_ACCOUNT_SID: "ACtest", TWILIO_FROM: "+15555550000",
+    SQUAD_SMS_TEST_NUMBERS: "(239) 555-0101, +1 239 555 0102" });
+  const tn = NN.makeNotifier();
+  check(tn.channelFor({ id: "a", phone: "+12395550101", email: "a@x.test" }) === "sms" &&
+        tn.channelFor({ id: "b", phone: "+12395550102" }) === "sms", "listed test numbers get texts");
+  check(tn.channelFor({ id: "c", phone: "+12395550199", email: "c@x.test" }) === "email",
+    "everyone else stays on email while texting is in test mode");
+  check(tn.channelFor({ id: "d", phone: "+12395550199" }) === null, "and a phone-only person off the list can't be reached");
+  check(/test numbers only: 2/.test(tn.kind), "the startup log says it's in test mode");
+  delete process.env.SQUAD_SMS_TEST_NUMBERS;
+  check(NN.makeNotifier().channelFor({ id: "c", phone: "+12395550199", email: "c@x.test" }) === "sms",
+    "with no test list, everyone with a phone gets texts");
+  for (const k of ["TWILIO_ACCOUNT_SID", "TWILIO_FROM", "SQUAD_SMS_TEST_NUMBERS"]) {
+    if (envKeep[k] === undefined) delete process.env[k]; else process.env[k] = envKeep[k];
+  }
+
+  notifier.backends.sms = null;
+  notifier.backends.email = realEmail;
+  await db.updatePerson(ginId, { phone: null });
+  notifier.send = realSend4;
+
+
+  console.log("\n=== find a time ===");
+  const pbox = [];
+  const realSendP = notifier.send;
+  notifier.send = async (p, m) => { pbox.push({ to: p, ...m }); return { ok: true }; };
+  check((await getPage(`/squadup/p/${danielle.token}`)).text.includes(`/squadup/start?t=`), "+ New plan opens the chooser");
+  const startPg = await getPage(`/squadup/start?t=${danielle.token}`);
+  check(startPg.text.includes("I know when") && startPg.text.includes("Find a time"), "the chooser offers both kinds");
+  check((await getPage(`/squadup/find?t=${danielle.token}`)).text.includes("Make the link"), "the Find a time page loads");
+  check((await getPage(`/squadup/find`)).status === 403, "starting one needs your own link");
+  check((await api("/squadup/api/poll", { token: gin.token, title: "Game night", tag_name: "Game night", options: [] })).status === 400, "it needs at least one date");
+  check((await api("/squadup/api/poll", { token: gin.token, title: "Game night", tag_name: "Game night", options: [{ day: "2020-01-01" }] })).status === 400,
+    "dates in the past are refused");
+  check((await api("/squadup/api/poll", { token: gin.token, title: "Game night", options: [{ day: "2030-11-06" }] })).status === 400,
+    "it needs a category, like a plan");
+  pbox.length = 0;
+  const pmade = await api("/squadup/api/poll", { token: gin.token, title: "Game night", location: "Gin's", tag_name: "Game night",
+    options: [{ day: "2030-11-06", time: "19:00" }, { day: "2030-11-07" }, { day: "2030-11-08", time: "18:00" }, { day: "2030-11-07" }] });
+  const PID = pmade.body.id;
+  check(pmade.status === 200 && PID && pmade.body.url.endsWith("/f/" + PID), "a poll gets its own link");
+  const gameTag = (await db.getTagByName("Game night")).id;
+  check((await db.getPoll(PID)).tag_id === gameTag, "it has a category");
+  const pollNote = pbox.find(m => m.to.id === danielleId);
+  check(pollNote && /Gin is picking a date for Game night at Gin's/.test(pollNote.body) && pollNote.url.includes(`/f/${PID}?t=`),
+    "people who follow the category hear about it, with their own link");
+  check(!pbox.some(m => m.to.id === ginId), "the organizer isn't messaged about their own poll");
+  const popts = (await db.listPollOptions(PID)).sort((x, y) => x.day.localeCompare(y.day));
+  check(popts.length === 3, "duplicate dates are dropped");
+  const [oA, oB, oC] = popts;
+  const anon = await getPage(`/squadup/f/${PID}`);
+  check(anon.status === 200 && anon.text.includes("Game night") && /<b>Gin<\/b> invited you/.test(anon.text) &&
+        anon.text.includes("Continue as a guest") && anon.text.includes("What's your name?"),
+    "anyone with the link starts at the welcome screen: who invited them, and their name");
+  check(/No account needed/.test(anon.text) && anon.text.includes("Join Squad Up") &&
+        anon.text.includes("I already have an account") &&
+        anon.text.indexOf('id="updbox"') < anon.text.indexOf('id="guestbox"') &&
+        /class="bubble plain gatebox hidden" id="guestbox"/.test(anon.text),
+    "joining comes first, with guest and I already have an account as the other choices");
+  check(!(await getPage(`/squadup/f/${PID}?t=${gin.token}`)).text.includes("Continue as a guest"), "members go straight to the poll");
+
+  const vote = (b) => api("/squadup/api/poll-vote", { poll_id: PID, ...b });
+  let gv = await vote({ name: "Raif  K", option_ids: [oA.id, oB.id, "not-a-real-id"] });
+  check(gv.status === 200 && gv.body.key && gv.body.name === "Raif K", "a guest answers with just a name, and gets a key to change it later");
+  const raifKey = gv.body.key;
+  check((await db.listPollVotes(PID)).find(v => v.name === "Raif K").option_ids.length === 2, "only real dates are saved");
+  check((await vote({ name: "raif k", option_ids: [oC.id] })).status === 409, "someone else can't answer under the same name");
+  await vote({ key: raifKey, option_ids: [oC.id] });
+  check((await db.listPollVotes(PID)).find(v => v.name === "Raif K").option_ids.join() === oC.id, "the key lets them change their answer");
+  check(!(await getPage(`/squadup/f/${PID}`)).text.includes(raifKey), "keys never appear on the page");
+  check((await vote({ option_ids: [oA.id] })).status === 400, "a guest without a name is asked for one");
+
+  // coming back on another phone or tab: "Are you Raif K?"  (its own poll, so counts below stay put)
+  const GP = (await api("/squadup/api/poll", { token: gin.token, title: "Beach day", tag_name: "Game night",
+    options: [{ day: "2030-11-20" }, { day: "2030-11-21" }, { day: "2030-11-22" }] })).body.id;
+  const [gA, gB, gC] = (await db.listPollOptions(GP)).sort((x, y) => x.day.localeCompare(y.day));
+  const raifVote0 = (await db.listPollVotes(PID)).find(v => v.name === "Raif K");
+  check(!!raifVote0.person_id, "a guest's answer belongs to a guest of their own, a name on Squad Up");
+  const raifDup = await api("/squadup/api/poll-vote", { poll_id: GP, name: "raif k", option_ids: [] });
+  check(raifDup.status === 409 && /pick your name/.test(raifDup.body.error), "the same name can't answer as someone new on another poll");
+  const raifGuest = await db.getPerson(raifVote0.person_id);
+  await api("/squadup/api/poll-vote", { poll_id: GP, token: raifGuest.personal_token, option_ids: [gA.id] });
+  const raifVote = (await db.listPollVotes(GP)).find(v => v.person_id === raifGuest.id);
+  check(raifVote && raifVote.name === "Raif K", "the same guest answers the next poll as themselves");
+  check((await api("/squadup/api/poll-claim", { poll_id: GP, vote_id: "nope" })).status === 404, "a made-up answer can't be claimed");
+  const gKey = raifKey;
+
+  // the organizer fills in for people who answered by text
+  const guestApi = b => api("/squadup/api/poll-guest", { poll_id: GP, ...b });
+  check((await guestApi({ token: danielle.token, name: "Sebastian", option_ids: [gA.id] })).status === 403,
+    "only the organizer can fill in for others");
+  let sg = await guestApi({ token: gin.token, name: "Sebastian", option_ids: [gA.id, gB.id] });
+  check(sg.status === 200 && sg.body.name === "Sebastian", "the organizer can add someone's answers by name");
+  const sebId = sg.body.vote_id;
+  check((await db.listPollVotes(GP)).find(v => v.id === sebId).option_ids.length === 2, "with their dates");
+  sg = await guestApi({ token: gin.token, vote_id: sebId, option_ids: [], maybe_ids: [gC.id] });
+  const sebNow = (await db.listPollVotes(GP)).find(v => v.id === sebId);
+  check(sg.status === 200 && sebNow.option_ids.length === 0 && sebNow.maybe_ids.join() === gC.id, "and change them later");
+  check((await guestApi({ token: gin.token, name: "sebastian", option_ids: [] })).status === 409,
+    "adding the same name twice is caught");
+  await api("/squadup/api/poll-vote", { poll_id: GP, token: danielle.token, option_ids: [gA.id] });
+  const danV = (await db.listPollVotes(GP)).find(v => v.person_id === danielleId);
+  check((await guestApi({ token: gin.token, vote_id: danV.id, option_ids: [] })).status === 404,
+    "members with an account change their own answers");
+  check((await guestApi({ token: gin.token, vote_id: raifVote.id, option_ids: [gC.id] })).status === 200,
+    "the organizer can change a guest's own answers too");
+  const orgPg = (await getPage(`/squadup/f/${GP}?t=${gin.token}`)).text;
+  check(orgPg.includes("Fill in for others") && orgPg.includes(`data-edit="${sebId}"`) && !orgPg.includes(`data-edit="${danV.id}"`),
+    "the organizer sees the guests with Edit");
+  check(!(await getPage(`/squadup/f/${GP}`)).text.includes("Fill in for others"), "nobody else does");
+  check(!orgPg.includes(gKey) && !orgPg.includes(sebNow.voter_key), "keys still never appear on the page");
+  for (const n of ["Ana", "Bo", "Cy", "Dee", "Eli", "Fay", "Gus"]) await guestApi({ token: gin.token, name: n, option_ids: [gB.id] });
+  const longPg = (await getPage(`/squadup/f/${GP}?t=${danielle.token}`)).text;
+  check(/data-expand[^>]*>\+2<\/button>/.test(longPg) && /<span class="rest" hidden>, <span class="gname"[^>]*>Fay<\/span> and <span class="gname"[^>]*>Gus<\/span><\/span>/.test(longPg),
+    "long name lists fold to \"+2\", with the rest on the page to open");
+  await api("/squadup/api/poll-cancel", { token: gin.token, poll_id: GP });
+  await vote({ token: danielle.token, option_ids: [oA.id] });
+  await vote({ token: danielle.token, option_ids: [oA.id] });
+  await vote({ token: will.token, option_ids: [oA.id, oB.id] });
+  const pv = await db.listPollVotes(PID);
+  check(pv.filter(v => v.person_id === danielleId).length === 1 && pv.find(v => v.person_id === danielleId).name === "Danielle",
+    "Squad Up members are recognized by their link, one answer each");
+  await vote({ name: "</script><b>x", option_ids: [] });
+  const ppage = await getPage(`/squadup/f/${PID}?t=${gin.token}`);
+  check(!ppage.text.includes("</script><b>x") && ppage.text.includes("\\u003c/script"), "names can't break the page");
+  check(/Most people[\s\S]*?2 of 4/.test(ppage.text.slice(ppage.text.indexOf("Wed Nov 6"))) && ppage.text.indexOf("Most people") > ppage.text.indexOf("Wed Nov 6"),
+    "the date most people can make is marked");
+  check(ppage.text.includes("None of these work: </script>") === false && ppage.text.includes("None of these work:"),
+    "people who can't make any date are listed");
+  check(ppage.text.includes("Copy link") && ppage.text.includes("Make it the plan"), "the organizer gets a share box and Make it the plan");
+  check(!(await getPage(`/squadup/f/${PID}?t=${danielle.token}`)).text.includes("Make it the plan"), "others don't");
+
+  const homeE = await getPage(`/squadup/p/${danielle.token}`);
+  check(homeE.text.includes("Finding a time") && homeE.text.includes(`/squadup/f/${PID}`), "it's on the home page of people who answered");
+  check((await getPage(`/squadup/p/${gin.token}`)).text.includes(`/squadup/f/${PID}`), "and whoever started it");
+  const pollOutsider = (await api("/squadup/api/signup", { name: "Ollie", email: "ollie@x.test" })).body;
+  check(!(await getPage(`/squadup/p/${pollOutsider.token}`)).text.includes(`/squadup/f/${PID}`), "but not everyone's");
+
+  // "if need be"
+  await vote({ token: will.token, option_ids: [oA.id], maybe_ids: [oB.id, oA.id] });
+  const willV = (await db.listPollVotes(PID)).find(v => v.person_id === willId);
+  check(willV.option_ids.join() === oA.id && willV.maybe_ids.join() === oB.id, "\"If need be\" is saved, and a yes beats it on the same date");
+  const mbPage = await getPage(`/squadup/f/${PID}?t=${gin.token}`);
+  check(mbPage.text.includes("+1 if need be") && mbPage.text.includes("If need be: Will"), "the page shows who could make it if need be");
+  const rk = C.pollRanking([{ id: "x", day: "2030-01-01" }, { id: "y", day: "2030-01-02" }],
+    [{ name: "a", option_ids: ["y"], maybe_ids: [] }, { name: "b", option_ids: [], maybe_ids: ["x"] }, { name: "c", option_ids: [], maybe_ids: ["x"] }]);
+  check(rk[0].score === 1 && rk[1].score === 1 && rk[0].option.id === "y",
+    "if need be counts half, and on a tie the outright yes wins");
+  const rk2 = C.pollRanking([{ id: "x", day: "2030-01-01" }, { id: "y", day: "2030-01-02" }],
+    [{ name: "a", option_ids: ["y"], maybe_ids: [] }, { name: "b", option_ids: [], maybe_ids: ["x"] }]);
+  check(rk2[0].option.id === "y", "so one outright yes beats one if need be");
+
+  // editing
+  check((await getPage(`/squadup/fedit/${PID}?t=${danielle.token}`)).status === 403, "only the organizer can open the edit page");
+  const pollEd = await getPage(`/squadup/fedit/${PID}?t=${gin.token}`);
+  check(pollEd.status === 200 && pollEd.text.includes("Save changes") && pollEd.text.includes('value="19:00"'), "the organizer can edit everything");
+  const keepAll = (await db.listPollOptions(PID)).map(o => ({ id: o.id, day: o.day, time: o.time }));
+  const editBody = (keep, extra) => ({ token: gin.token, poll_id: PID, title: "Game night", location: "Gin's", tag_id: gameTag, keep, ...extra });
+  check((await api("/squadup/api/poll-edit", { ...editBody(keepAll), token: danielle.token })).status === 403, "nobody else can save edits");
+  const nudged = keepAll.map(o => o.id === oA.id ? { ...o, time: "19:30" } : o);
+  pbox.length = 0;
+  let pe = await api("/squadup/api/poll-edit", editBody(nudged, { title: "Board game night", note: "Bring a game" }));
+  check(pe.status === 200 && (await db.getPoll(PID)).title === "Board game night", "renaming saves");
+  check((await db.listPollOptions(PID)).find(o => o.id === oA.id).time === "19:30", "moving a time saves");
+  check((await db.listPollVotes(PID)).filter(v => v.option_ids.includes(oA.id)).length === 2, "and everyone's answers stay on it");
+  check(pbox.length === 0, "edits go out quietly");
+  check((await api("/squadup/api/poll-edit", editBody(nudged.map(o => o.id === oB.id ? { ...o, day: "2030-11-06", time: "19:30" } : o)))).status === 400,
+    "two dates can't end up the same");
+  check((await api("/squadup/api/poll-edit", editBody(nudged.map(o => o.id === oB.id ? { ...o, day: "2020-01-01" } : o)))).status === 400,
+    "a date can't be moved into the past");
+  pe = await api("/squadup/api/poll-edit", editBody(nudged.filter(o => o.id !== oC.id), { add: [{ day: "2030-11-10", time: "20:00" }] }));
+  const afterOpts = await db.listPollOptions(PID);
+  check(pe.body.removed === 1 && !afterOpts.some(o => o.id === oC.id) && afterOpts.some(o => o.day === "2030-11-10"),
+    "dates can be removed and added in the same save");
+  check(!(await db.listPollVotes(PID)).some(v => v.option_ids.includes(oC.id)), "answers for a removed date go with it");
+  check((await api("/squadup/api/poll-edit", editBody([]))).status === 400, "at least one date has to stay");
+  const nowOpts = (await db.listPollOptions(PID)).map(o => ({ id: o.id, day: o.day, time: o.id === oA.id ? "19:00" : o.time }));
+  await api("/squadup/api/poll-edit", editBody(nowOpts, { title: "Game night", note: "" }));
+
+  // inviting people to vote
+  const invPg = await getPage(`/squadup/f/${PID}?t=${gin.token}`);
+  check(invPg.text.includes("+ Invite people") && invPg.text.includes('id="invited"'), "the organizer has the invite picker");
+  check(!(await getPage(`/squadup/f/${PID}?t=${danielle.token}`)).text.includes("+ Invite people"), "others don't");
+  const ollieId = (await db.getPersonByToken(pollOutsider.token)).id;
+  check(invPg.text.includes(`data-invitee="${ollieId}"`) && !invPg.text.includes(`data-invitee="${danielleId}"`),
+    "the picker lists people who haven't answered or been asked");
+  check((await api("/squadup/api/poll-invite", { token: danielle.token, poll_id: PID, person_ids: [ollieId] })).status === 403,
+    "only the organizer can invite");
+  pbox.length = 0;
+  let pin = await api("/squadup/api/poll-invite", { token: gin.token, poll_id: PID, person_ids: [ollieId] });
+  const toOllie = pbox.find(m => m.to.id === ollieId);
+  check(pin.body.invited === 1 && toOllie && /Gin wants to find a time: Game night/.test(toOllie.subject) &&
+    toOllie.url.includes(`/f/${PID}?t=`), "invited people get a message with their own link to vote");
+  const ollieHome = await getPage(`/squadup/p/${pollOutsider.token}`);
+  check(ollieHome.text.includes(`/squadup/f/${PID}`) && ollieHome.text.includes("Your turn"), "and it's on their home page, marked as their turn");
+  check((await getPage(`/squadup/f/${PID}?t=${gin.token}`)).text.includes(">Ollie</span>"), "they show under Invited");
+  pbox.length = 0;
+  const PZ = (await api("/squadup/api/poll", { token: will.token, title: "Tennis", tag_name: "Tennis", options: [{ day: "2030-12-02" }] })).body.id;
+  const pzOpt = (await db.listPollOptions(PZ))[0];
+  pbox.length = 0;
+  check((await api("/squadup/api/poll-invite-new", { token: will.token, poll_id: PZ, name: "Zed", email: "zed@x.test" })).status === 410,
+    "polls don't add new people by email either");
+  // someone a friend added before links replaced that
+  let zed = await db.createPerson({ name: "Zed", email: "zed@x.test", invited_by: willId, confirmed: false });
+  pin = await api("/squadup/api/poll-invite", { token: will.token, poll_id: PZ, person_ids: [zed.id] });
+  zed = await db.getPerson(zed.id);
+  const toZed = pbox.find(m => m.to.id === zed.id);
+  check(pin.body.invited === 1 && !zed.confirmed_at && toZed && /only message you'll get from us unless you answer/.test(toZed.body),
+    "someone added before who hasn't answered yet is told it's the only message unless they answer");
+  pbox.length = 0;
+  const p3 = (await api("/squadup/api/poll", { token: will.token, title: "Brunch", tag_name: "Brunch", options: [{ day: "2030-12-05" }] })).body.id;
+  const pin3 = await api("/squadup/api/poll-invite", { token: will.token, poll_id: p3, person_ids: [zed.id] });
+  check(pin3.body.waiting === 1 && !pbox.some(m => m.to.id === zed.id), "a second invite waits until they've answered the first");
+  await api("/squadup/api/poll-vote", { poll_id: PZ, token: zed.personal_token, option_ids: [], maybe_ids: [pzOpt.id] });
+  check(!!(await db.getPerson(zed.id)).confirmed_at, "answering a vote counts as opting in");
+  await api("/squadup/api/poll-cancel", { token: will.token, poll_id: p3 });
+  await api("/squadup/api/poll-cancel", { token: will.token, poll_id: PZ });
+
+  check((await api("/squadup/api/poll-add", { token: danielle.token, poll_id: PID, options: [{ day: "2030-11-09" }] })).status === 403,
+    "only the organizer can add dates");
+  await api("/squadup/api/poll-add", { token: gin.token, poll_id: PID, options: [{ day: "2030-11-09" }, { day: "2030-11-07" }] });
+  check((await db.listPollOptions(PID)).length === 4, "the organizer can add more (repeats are skipped)");
+
+  const mk = await getPage(`/squadup/new?t=${gin.token}&poll=${PID}&opt=${oA.id}`);
+  check(mk.text.includes("Make it a plan") && mk.text.includes('value="2030-11-06T19:00"') && mk.text.includes('value="2030-11-07T18:00"'),
+    "Make it the plan fills in that date, with the runner-up as the backup");
+  check(mk.text.includes('value="Game night"') && mk.text.includes("value=\"Gin&#39;s\""), "and the name and place");
+  check(new RegExp(`<option value="${gameTag}" selected>`).test(mk.text), "and the poll's category");
+  check((await getPage(`/squadup/new?t=${danielle.token}&poll=${PID}`)).status === 403, "only the organizer can make it a plan");
+
+  await vote({ token: danielle.token, option_ids: [oA.id, oB.id] });
+  // two people who replied by text, filled in by the organizer
+  await api("/squadup/api/poll-guest", { token: gin.token, poll_id: PID, name: "Tom T.", option_ids: [], maybe_ids: [oA.id] });
+  await api("/squadup/api/poll-guest", { token: gin.token, poll_id: PID, name: "Nope N.", option_ids: [oC.id] });
+  pbox.length = 0;
+  const fin = await api("/squadup/api/activity", { token: gin.token, title: "Game night", location: "Gin's", tag_id: gameTag,
+    primary: "2030-11-06T19:00", backup: "2030-11-07T18:00", poll_id: PID, poll_option_id: oA.id, poll_backup_option_id: oB.id });
+  check(fin.status === 200, "posting it makes a real plan");
+  const finA = { options: await db.listOptions(fin.body.id), responses: await db.listResponses(fin.body.id) };
+  const finPrim = finA.options.find(o => o.kind === "primary"), finBack = finA.options.find(o => o.kind === "backup");
+  const rEm = finA.responses.find(r => r.person_id === danielleId), rWill = finA.responses.find(r => r.person_id === willId);
+  check(rWill && rWill.option_ids.includes(finPrim.id), "people who said that date works are already in for it");
+  check(rEm && rEm.option_ids.includes(finPrim.id) && rEm.option_ids.includes(finBack.id), "and for the backup, if they picked it too");
+  check(rWill.option_ids.includes(finBack.id), "\"if need be\" counts too: Will is in for the backup he could make work");
+  const finPV = await db.listPollVotes(PID);
+  const tomVote = finPV.find(v => v.name === "Tom T."), tomP = tomVote && tomVote.person_id && await db.getPerson(tomVote.person_id);
+  const rTom = tomP && finA.responses.find(r => r.person_id === tomP.id);
+  check(tomP && !tomP.email && !tomP.phone && rTom && rTom.can_make_it && rTom.option_ids.join() === finPrim.id,
+    "names the organizer filled in who said it works (even \"if need be\") are on the plan as guests");
+  check(!finA.responses.some(r => r.person_id === finPV.find(v => v.name === "Nope N.").person_id) &&
+        !finA.responses.some(r => r.person_id === finPV.find(v => v.name === "Raif K").person_id),
+    "people who picked a different date aren't added");
+  check(!pbox.some(m => m.to.id === tomP.id), "and guests get no messages");
+  const finPg = await getPage(`/squadup/a/${fin.body.id}?t=${gin.token}`);
+  check(finPg.text.includes("Tom T.") && finPg.text.includes("Danielle"), "their names show on the plan");
+  const invs = await db.listInvites(fin.body.id);
+  check(invs.some(i => i.person_id === danielleId) && invs.some(i => i.person_id === willId), "everyone on Squad Up who answered gets it on their page");
+  check(invs.some(i => i.person_id === ollieId) && pbox.some(m => m.to.id === ollieId && /It's set/.test(m.body)),
+    "so does anyone invited to vote, even if they didn't");
+  const pollToEm = pbox.find(m => m.to.id === danielleId);
+  check(pollToEm && /It's set: Game night at Gin's/.test(pollToEm.body) && /you're down as in/.test(pollToEm.body), "and a message saying it's set");
+  const pdone = await db.getPoll(PID);
+  check(!!pdone.finalized_at && pdone.activity_id === fin.body.id, "the poll is marked done");
+  check((await vote({ key: raifKey, option_ids: [oA.id] })).status === 400, "no more answers after that");
+  const donePg = await getPage(`/squadup/f/${PID}`);
+  check(donePg.text.includes("It's set") && donePg.text.includes(`/squadup/a/${fin.body.id}`), "the poll link now points to the plan");
+  check((await api("/squadup/api/activity", { token: gin.token, title: "Again", tag_name: "Game night", primary: "2030-11-06T19:00",
+    poll_id: PID })).status === 400, "it can't be made a plan twice");
+  check(!(await getPage(`/squadup/p/${danielle.token}`)).text.includes(`/squadup/f/${PID}`), "and it leaves the home page");
+
+  const hikePoll = (await api("/squadup/api/poll", { token: gin.token, title: "Hike", tag_name: "Hiking", options: [{ day: "2030-12-01" }] })).body.id;
+  check((await api("/squadup/api/poll-cancel", { token: danielle.token, poll_id: hikePoll })).status === 403, "only the organizer can delete one");
+  await api("/squadup/api/poll-cancel", { token: gin.token, poll_id: hikePoll });
+  check((await getPage(`/squadup/f/${hikePoll}`)).status === 404, "a deleted one's link stops working");
+  notifier.send = realSendP;
+
+  console.log("\n=== staying logged in, guests, and logging in ===");
+  // cookie-aware helpers: a "browser" is just the cookie it carries
+  const cookieOf = r => ((r.headers.get("set-cookie") || "").match(/squadup=([^;]*)/) || [])[1];
+  const capi = async (path, body, cookie) => {
+    if (path === "/squadup/api/signup") body = { agree: true, sms_consent: true, ...body };
+    const r = await fetch(B + path, { method: "POST", headers: { "Content-Type": "application/json", ...(cookie ? { cookie: "squadup=" + cookie } : {}) },
+      body: JSON.stringify(body || {}) });
+    return { status: r.status, body: await r.json().catch(() => ({})), cookie: cookieOf(r), raw: r.headers.get("set-cookie") };
+  };
+  const cget = async (path, cookie) => {
+    const r = await fetch(B + path, { redirect: "manual", headers: cookie ? { cookie: "squadup=" + cookie } : {} });
+    return { status: r.status, text: await r.text(), loc: r.headers.get("location"), cookie: cookieOf(r), raw: r.headers.get("set-cookie") };
+  };
+  const lbox = [];
+  const realSendL = notifier.send;
+  notifier.send = async (p, m) => { lbox.push({ to: p, ...m }); return { ok: true }; };
+
+  // remembering a browser
+  let pg1 = await cget(`/squadup/p/${gin.token}`);
+  check(pg1.cookie === gin.token && /Max-Age=31536000/.test(pg1.raw) && /HttpOnly/.test(pg1.raw) && /SameSite=Lax/.test(pg1.raw),
+    "opening your link remembers this browser for a year (HttpOnly, SameSite=Lax)");
+  const LP = (await api("/squadup/api/activity", { token: gin.token, title: "Pottery", tag_name: "Creative",
+    primary: "2030-10-10T18:00", backup: "2030-10-11T18:00" })).body.id;
+  const lpOpts = (await db.listOptions(LP)).sort((x, y) => x.starts_at.localeCompare(y.starts_at));
+  pg1 = await cget(`/squadup/a/${LP}`, gin.token);
+  check(pg1.status === 200 && pg1.text.includes("Fill in for others") && !pg1.text.includes("Continue as a guest"),
+    "a public plan link opens signed in, with no key in it");
+  check(pg1.cookie === gin.token, "and every visit restarts the year");
+  check(pg1.text.includes(`<code class="link hidden" id="shareurl">${process.env.SQUAD_BASE_URL}/a/${LP}</code>`),
+    "the plan's share link is the public one, never your key");
+  check(/id="logout"/.test(pg1.text) && !/class="loginlink"/.test(pg1.text), "members get Log out at the bottom, and no Log in");
+  check(!/Send a link to anyone[\s\S]*\?t=/.test(pg1.text.slice(pg1.text.indexOf("Send a link to anyone"), pg1.text.indexOf("Send a link to anyone") + 600)),
+    "nothing in the share box carries a key");
+  const out1 = await cget("/squadup/logout", gin.token);
+  check(/squadup=;/.test(out1.raw) && /Max-Age=0/.test(out1.raw), "Log out forgets the browser");
+  pg1 = await cget(`/squadup/a/${LP}`);
+  check(pg1.text.includes("Continue as a guest") && /<b>Gin<\/b> invited you/.test(pg1.text) && /class="loginlink"|I already have an account/.test(pg1.text),
+    "a stranger opening a plan link gets the welcome screen");
+  check((await cget("/squadup")).text.includes("Continue as a guest"), "so does the front door");
+  check((await cget("/squadup", gin.token)).loc === `/squadup/p/${gin.token}`, "members at the front door go to their page");
+  check((await capi("/squadup/api/rsvp", { activity_id: LP, option_ids: [lpOpts[0].id] }, gin.token)).status === 200,
+    "the cookie works for answering too");
+  const formTry = await fetch(B + "/squadup/api/rsvp", { method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded", cookie: "squadup=" + gin.token },
+    body: "activity_id=" + LP + "&cant=1" });
+  check(formTry.status === 403, "but never for a plain form post from another site");
+
+  // guests
+  const kay = await capi("/squadup/api/guest", { name: "  Kayla  " });
+  check(kay.status === 200 && kay.body.name === "Kayla" && !!kay.cookie, "Continue as a guest needs just a name, and remembers the browser");
+  const kayP = await db.getPersonByToken(kay.cookie);
+  check(!kayP.email && !kayP.phone && !kayP.confirmed_at, "a guest has no phone or email, so they get no messages");
+  check((await capi("/squadup/api/guest", { name: " " })).status === 400, "a guest still needs a name");
+  let kpg = await cget(`/squadup/a/${LP}`, kay.cookie);
+  check(kpg.text.includes("Answering as</span> <b>Kayla</b>") && kpg.text.includes("Not you?") &&
+    kpg.text.includes('<details class="acct">') && kpg.text.includes('href="/squadup/login">Log in</a>') && kpg.text.includes("Join Squad Up"),
+    "a guest sees the plan, who they're answering as, and a menu with Log in and Join");
+  check(!kpg.text.includes("Suggest a time") && !kpg.text.includes("Fill in for others") && !kpg.text.includes("+ Invite people"),
+    "guests can't suggest times, fill in, or invite");
+  let kr = await capi("/squadup/api/rsvp", { activity_id: LP, option_ids: [lpOpts[1].id] }, kay.cookie);
+  check(kr.status === 200 && (await db.listResponses(LP)).some(r => r.person_id === kayP.id), "guests can say which times work");
+  check(!(await db.getPerson(kayP.id)).confirmed_at, "which doesn't sign them up for messages");
+  check((await capi("/squadup/api/activity", { title: "Nope", tag_name: "Creative", primary: "2030-10-12T18:00" }, kay.cookie)).status === 403,
+    "guests can't post plans");
+  check((await capi("/squadup/api/tag-new", { name: "Nope" }, kay.cookie)).status === 403, "or activities");
+  check(!(await getPage(`/squadup/a/${LP}?t=${gin.token}`)).text.includes(`data-invitee="${kayP.id}"`), "guests aren't in the invite picker");
+  lbox.length = 0;
+  await api("/squadup/api/activity-edit", { token: gin.token, activity_id: LP, title: "Pottery", tag_id: (await db.getActivity(LP)).tag_id,
+    primary: "2030-10-10T19:00", backup: "2030-10-11T18:00" });
+  check(!lbox.some(m => m.to.id === kayP.id), "and plan changes don't try to message them");
+  kpg = await cget("/squadup", kay.cookie);
+  check(kpg.text.includes("You're here as a guest") && kpg.text.includes("Pottery") && kpg.text.includes("Get updates"),
+    "a guest's home shows what's coming up, with Get updates");
+  check((await cget(`/squadup/new`, kay.cookie)).status === 403, "pages for making plans need an account");
+
+  // "Are you Kayla?" on the welcome screen -- asked by the server, squad-wide
+  const gate = await cget(`/squadup/a/${LP}`);
+  check(!gate.text.includes(kayP.id), "the welcome screen doesn't list anyone's answers up front");
+  const kayAsk = await capi("/squadup/api/guest", { name: "kayla" });
+  check(kayAsk.status === 409 && kayAsk.body.exact && kayAsk.body.match.length === 1 && kayAsk.body.match[0].id === kayP.id &&
+        kayAsk.body.match[0].guest && /Are you Kayla/.test(kayAsk.body.error), "typing a guest's name asks \"Are you Kayla?\"");
+  const kayAgain = await capi("/squadup/api/guest", { claim: { id: kayP.id } });
+  check(kayAgain.status === 200 && kayAgain.cookie === kay.cookie, "picking \"That's me\" logs this browser in as that guest");
+  check((await capi("/squadup/api/guest", { claim: { id: ginId } })).status === 404,
+    "but never as someone with an account");
+  const ginAsk = await capi("/squadup/api/guest", { name: "GIN" });
+  check(ginAsk.status === 409 && ginAsk.body.match[0].guest === false && /has a Squad Up account/.test(ginAsk.body.error),
+    "a member's name offers a log-in link instead");
+  const kayFirst = await capi("/squadup/api/guest", { name: "Kay" });
+  check(kayFirst.status === 201 || kayFirst.status === 200, "a different first name is fine");
+  const kSim = await capi("/squadup/api/guest", { name: "Kayla" , skipSimilar: true });
+  check(kSim.status === 409, "an exact name is always asked about, even after \"Someone new\"");
+  const LV = (await api("/squadup/api/poll", { token: gin.token, title: "Trivia", tag_name: "Games",
+    options: [{ day: "2030-10-20" }, { day: "2030-10-21" }] })).body.id;
+  const lvOpts = (await db.listPollOptions(LV)).sort((x, y) => x.day.localeCompare(y.day));
+  // an answer from before guests had their own row: just a name on a poll
+  const oldVote = await db.createPollVote({ poll_id: LV, name: "Bea", person_id: null, voter_key: "legacy-key-123456",
+    option_ids: [lvOpts[0].id], maybe_ids: [] });
+  const tidied = await require("./server/index.js").tidyNames();
+  const beaVote = (await db.listPollVotes(LV)).find(v => v.id === oldVote.id);
+  const beaP = beaVote.person_id && await db.getPerson(beaVote.person_id);
+  check(tidied.linked >= 1 && beaP && beaP.name === "Bea" && !beaP.email && beaP.invited_by === ginId,
+    "older name-only answers become guests of their own on start-up (added by the poll's organizer)");
+  const oldKey = "legacy-key-123456";
+  const cyKey = (await api("/squadup/api/poll-vote", { poll_id: LV, name: "Cyd", option_ids: [lvOpts[1].id] })).body.key;
+  const cyGuest = (await db.listPollVotes(LV)).find(v => v.name === "Cyd").person_id;
+  const cyAsk = await capi("/squadup/api/guest", { name: "Cyd", keys: [cyKey] });
+  check(cyAsk.status === 409 && cyAsk.body.match[0].id === cyGuest, "continuing as a guest with that name asks if it's them");
+  const cy = await capi("/squadup/api/guest", { claim: { id: cyGuest }, keys: [cyKey] });
+  const cyP = await db.getPersonByToken(cy.cookie);
+  check(cyP && cyP.id === cyGuest && (await db.listPollVotes(LV)).find(v => v.name === "Cyd").person_id === cyP.id,
+    "and \"that's me\" picks up their answers");
+  check(oldKey && !(await cget(`/squadup/f/${LV}?t=${gin.token}`)).text.includes(cyKey), "keys still never show on a page");
+  const cyVote = await capi("/squadup/api/poll-vote", { poll_id: LV, option_ids: [lvOpts[0].id, lvOpts[1].id] }, cy.cookie);
+  check(cyVote.status === 200 && (await db.listPollVotes(LV)).filter(v => v.person_id === cyP.id).length === 1,
+    "a guest changes their poll answer in place");
+  check((await cget(`/squadup/f/${LV}?t=${gin.token}`)).text.includes(`data-edit="${cyVote.body.vote_id}"`),
+    "and the organizer can fill in for them");
+
+  // Get updates: a guest becomes a member, and their answers come along
+  lbox.length = 0;
+  const kaySign = await capi("/squadup/api/signup", { name: "Kayla M", email: "kayla@x.test" }, kay.cookie);
+  const kayM = await db.getPersonByEmail("kayla@x.test");
+  check(kaySign.status === 200 && kaySign.cookie === kayM.personal_token, "Get updates makes an account and logs this browser in");
+  check(kayM.id === kayP.id && kayM.name === "Kayla M" && !(await db.getPersonByToken(kay.cookie)),
+    "the guest's own row becomes the account (answers and all), and the old guest key stops working");
+  check((await db.listResponses(LP)).find(r => r.person_id === kayM.id).option_ids.join() === lpOpts[1].id,
+    "with the times they picked as a guest");
+
+  // I already have an account
+  lbox.length = 0;
+  const noone = await capi("/squadup/api/login", { contact: "nobody@x.test" });
+  check(noone.status === 200 && !lbox.length, "logging in with an unknown email says the same thing, and sends nothing");
+  check((await capi("/squadup/api/login", { contact: "not an email" })).status === 400, "a mistyped contact is caught");
+  const cyLogin = await capi("/squadup/api/login", { contact: "EM@x.test", next: `/squadup/f/${LV}` }, cy.cookie);
+  const lmail = lbox.find(m => m.to.id === danielleId);
+  check(cyLogin.status === 200 && lmail && /\/squadup\/in\//.test(lmail.url) && /log-in link/.test(lmail.subject),
+    "a known email gets a log-in link");
+  const lpath = new URL(lmail.url).pathname;
+  check((await cget(lpath.slice(0, -3) + "AAA")).status === 404, "a changed link doesn't work");
+  const used = await cget(lpath);
+  check(used.status === 302 && used.loc === `/squadup/f/${LV}` && used.cookie === danielle.token,
+    "tapping it logs that browser in and goes back to where they were");
+  check(!(await db.getPerson(cyP.id)) && (await db.listPollVotes(LV)).some(v => v.person_id === danielleId),
+    "and what they did as a guest moves into their account");
+  check((await capi("/squadup/api/login", { contact: "(239) 555-0999" })).status === 200, "phone numbers work for logging in too");
+  lbox.length = 0;
+  const dupJoin = await capi("/squadup/api/signup", { name: "Will again", email: "will@x.test" });
+  check(dupJoin.status === 200 && dupJoin.body.emailed && lbox.some(m => m.to.id === willId && /\/squadup\/in\//.test(m.url)),
+    "Get updates with an email that's already signed up just sends their log-in link, no error");
+
+  // Fill in for others, on a plan
+  check((await api("/squadup/api/plan-guest", { token: danielle.token, activity_id: LP, name: "Seb", option_ids: [] })).status === 403,
+    "only the organizer can fill in for others on a plan");
+  let pgs = await api("/squadup/api/plan-guest", { token: gin.token, activity_id: LP, name: "Sebastian", option_ids: [lpOpts[0].id] });
+  check(pgs.status === 409 && pgs.body.exact && pgs.body.match.length === 1 && pgs.body.match[0].guest,
+    "a name that's already a guest (from a poll) is offered, not made twice");
+  pgs = await api("/squadup/api/plan-guest", { token: gin.token, activity_id: LP, person_id: pgs.body.match[0].id, option_ids: [lpOpts[0].id, "junk"] });
+  const sebP = await db.getPerson(pgs.body.person_id);
+  check(pgs.status === 200 && sebP && !sebP.email && (await db.listResponses(LP)).find(r => r.person_id === sebP.id).option_ids.join() === lpOpts[0].id,
+    "the organizer adds someone's times by name");
+  pgs = await api("/squadup/api/plan-guest", { token: gin.token, activity_id: LP, person_id: sebP.id, cant: true });
+  check((await db.listResponses(LP)).find(r => r.person_id === sebP.id).can_make_it === false, "and can mark them out");
+  check((await api("/squadup/api/plan-guest", { token: gin.token, activity_id: LP, name: "sebastian", option_ids: [] })).status === 409,
+    "the same name twice is caught");
+  check((await api("/squadup/api/plan-guest", { token: gin.token, activity_id: LP, person_id: danielleId, option_ids: [] })).status === 404,
+    "people with accounts change their own");
+  const orgPlan = (await getPage(`/squadup/a/${LP}?t=${gin.token}`)).text;
+  check(orgPlan.includes(`data-edit="${sebP.id}"`) && /Can't make it: <span class="gname"[^>]*>Sebastian<\/span>/.test(orgPlan),
+    "they show up for the organizer to tap and change");
+
+  { // v1.1 checks, in their own scope
+  console.log("\n=== one name per person, squad-wide ===");
+  lbox.length = 0;
+  check((await api("/squadup/api/signup", { name: "will", email: "will2@x.test" })).status === 409,
+    "signing up with a member's name is refused, asking for a last initial");
+  // a guest the organizer added, who later signs up
+  const tomAdd = await api("/squadup/api/plan-guest", { token: gin.token, activity_id: LP, name: "Theo T.", option_ids: [lpOpts[1].id] });
+  const tomG = tomAdd.body.person_id;
+  const tomAsk = await capi("/squadup/api/signup", { name: "Theo T.", email: "theo@x.test" });
+  check(tomAsk.status === 409 && tomAsk.body.exact && tomAsk.body.match[0].id === tomG,
+    "signing up with a guest's name asks \"did you already answer as a guest?\"");
+  const tomSign = await capi("/squadup/api/signup", { name: "Theo T.", email: "theo@x.test", claim_guest: tomG });
+  const tomM = await db.getPersonByEmail("theo@x.test");
+  check(tomSign.status === 200 && tomM.id === tomG && (await db.listResponses(LP)).find(r => r.person_id === tomM.id).option_ids.join() === lpOpts[1].id,
+    "\"that's me\" turns the guest into their account, with the answers the organizer filled in");
+  const tomsAll = (await db.listPeople()).filter(x => x.name.toLowerCase() === "theo t.");
+  check(tomsAll.length === 1, "and there's still just one Theo T.");
+  check((await capi("/squadup/api/signup", { name: "Theo T.", email: "other-theo@x.test", skipSimilar: true })).status === 409,
+    "nobody else can take that name");
+  const simAsk = await capi("/squadup/api/signup", { name: "Sebastian Ruiz", email: "seb@x.test" });
+  check(simAsk.status === 409 && simAsk.body.match.some(x => x.id === sebP.id) && !simAsk.body.exact,
+    "\"Sebastian Ruiz\" is asked whether he's the guest \"Sebastian\"");
+  const simNo = await capi("/squadup/api/signup", { name: "Sebastian Ruiz", email: "seb@x.test", skipSimilar: true });
+  check(simNo.status === 200 && !!(await db.getPerson(sebP.id)), "\"no, that's not me\" makes a new account and leaves the guest alone");
+  const sebR = await db.getPersonByEmail("seb@x.test");
+  await db.updatePerson(sebR.id, { email_confirmed_at: new Date().toISOString() });
+  // renaming yourself to a guest's name: is that you?
+  const renAsk = await api("/squadup/api/me", { token: sebR.personal_token, name: "Sebastian", email: "seb@x.test" });
+  check(renAsk.status === 409 && renAsk.body.match[0].id === sebP.id, "renaming yourself to a guest's name asks if it's you");
+  const renYes = await api("/squadup/api/me", { token: sebR.personal_token, name: "Sebastian", email: "seb@x.test", claim_guest: sebP.id });
+  check(renYes.status === 200 && !(await db.getPerson(sebP.id)) && (await db.getPerson(sebR.id)).name === "Sebastian" &&
+        (await db.listResponses(LP)).some(r => r.person_id === sebR.id), "yes merges the guest's answers into you");
+  check((await api("/squadup/api/me", { token: sebR.personal_token, name: "GIN", email: "seb@x.test" })).status === 409,
+    "and nobody can rename themselves to a member's name");
+  // the database's own rule, underneath the app's
+  let dupErr = null;
+  try { await db.createPerson({ name: "gin", email: "x9@x.test" }); } catch (e) { dupErr = e; }
+  check(dupErr && dupErr.code === "23505", "the database itself refuses a second person with the same name");
+  // start-up tidy for older data: two guests with one name, and a guest named like a member
+  const rawDb = db._raw();
+  const now0 = new Date().toISOString();
+  rawDb.people.push({ id: "dupA", name: "Zoe", email: null, phone: null, personal_token: "tokA-0000000000", created_at: "2026-01-01T00:00:00Z" },
+                    { id: "dupB", name: "zoe", email: null, phone: null, personal_token: "tokB-0000000000", created_at: "2026-02-01T00:00:00Z" },
+                    { id: "dupW", name: "Will", email: null, phone: null, personal_token: "tokW-0000000000", created_at: now0 });
+  rawDb.responses.push({ activity_id: LP, person_id: "dupB", option_ids: [lpOpts[0].id], can_make_it: true },
+                       { activity_id: LP, person_id: "dupW", option_ids: [lpOpts[1].id], can_make_it: true });
+  const t2 = await require("./server/index.js").tidyNames();
+  const zoes = (await db.listPeople()).filter(x => x.name.toLowerCase() === "zoe");
+  check(t2.merged >= 2 && zoes.length === 1 && zoes[0].id === "dupA" && (await db.listResponses(LP)).some(r => r.person_id === "dupA"),
+    "start-up folds two guests with one name into the older one, answers and all");
+  check(!(await db.getPerson("dupW")) && (await db.listResponses(LP)).some(r => r.person_id === willId),
+    "and a guest with a member's name into that member");
+
+  console.log("\n=== the organizer tidying up guests ===");
+  const ana = await api("/squadup/api/plan-guest", { token: gin.token, activity_id: LP, name: "Annie", option_ids: [lpOpts[0].id] });
+  const anaId = ana.body.person_id;
+  check((await api("/squadup/api/guest-rename", { token: danielle.token, person_id: anaId, name: "Anna" })).status === 403,
+    "only whoever added a guest can rename them");
+  const anaRen = await api("/squadup/api/guest-rename", { token: gin.token, person_id: anaId, name: "Anna B." });
+  check(anaRen.status === 200 && (await db.getPerson(anaId)).name === "Anna B.", "the organizer can fix a guest's name");
+  check((await api("/squadup/api/guest-rename", { token: gin.token, person_id: anaId, name: "Danielle" })).status === 409,
+    "but not to someone else's name");
+  const orgLP = (await getPage(`/squadup/a/${LP}?t=${gin.token}`)).text;
+  check(orgLP.includes(`data-remove="${anaId}"`) && orgLP.includes('id="prename"') && orgLP.includes("Same person as"),
+    "the organizer sees × on each guest, and Rename / Same person as… while filling in");
+  check(/"person_id":"[^"]+","name":"Anna B\.","guest":true,"manage":true/.test(orgLP), "for guests they added");
+  const pollGuestAdd = await api("/squadup/api/poll-guest", { token: gin.token, poll_id: LV, name: "Anna B.", option_ids: [lvOpts[0].id] });
+  check(pollGuestAdd.status === 409 && pollGuestAdd.body.match[0].id === anaId, "on a poll, the same name finds the same guest");
+  const pga = await api("/squadup/api/poll-guest", { token: gin.token, poll_id: LV, person_id: anaId, option_ids: [lvOpts[0].id] });
+  check(pga.status === 200 && (await db.listPollVotes(LV)).find(v => v.person_id === anaId), "and fills in for them there");
+  const peek = await api("/squadup/api/poll-guest", { token: gin.token, poll_id: LV, person_id: anaId, option_ids: [], peek: true });
+  check(peek.body.vote_id === pga.body.vote_id && (await db.listPollVotes(LV)).find(v => v.person_id === anaId).option_ids.length === 1,
+    "picking someone already there doesn't wipe their answers");
+  check((await api("/squadup/api/plan-guest", { token: gin.token, activity_id: LP, name: "Danielle", option_ids: [] })).status === 409,
+    "a member's name is turned away: they answer for themselves");
+  const rmPlan = await api("/squadup/api/plan-guest", { token: gin.token, activity_id: LP, person_id: anaId, remove: true });
+  check(rmPlan.status === 200 && !(await db.listResponses(LP)).some(r => r.person_id === anaId) && !!(await db.getPerson(anaId)),
+    "× takes a guest off the plan (they're still on the poll)");
+  const rmPoll = await api("/squadup/api/poll-guest", { token: gin.token, poll_id: LV, vote_id: pga.body.vote_id, remove: true });
+  check(rmPoll.status === 200 && !(await db.getPerson(anaId)), "and off the poll; with nothing left, the guest is gone");
+  // "Same person as…"
+  const tommy = (await api("/squadup/api/plan-guest", { token: gin.token, activity_id: LP, name: "Tommy", option_ids: [lpOpts[0].id], skipSimilar: true })).body.person_id;
+  check((await api("/squadup/api/guest-merge", { token: danielle.token, person_id: tommy, into_id: tomM.id })).status === 403,
+    "only whoever added a guest can merge them");
+  const mg = await api("/squadup/api/guest-merge", { token: gin.token, person_id: tommy, into_id: tomM.id });
+  check(mg.status === 200 && !(await db.getPerson(tommy)) && (await db.listResponses(LP)).find(r => r.person_id === tomM.id).option_ids.join() === lpOpts[1].id,
+    "merging moves them into the real person (whose own answer wins)");
+
+  console.log("\n=== guests and Activities ===");
+  const kv = await capi("/squadup/api/guest", { name: "Viv" });
+  const viv = await db.getPersonByToken(kv.cookie);
+  const SI = (await api("/squadup/api/tag-new", { token: will.token, name: "Sunset sail" })).body.id;
+  const vivHome = await cget("/squadup", kv.cookie);
+  check(vivHome.text.includes("Sunset sail") && vivHome.text.includes(`data-int="${SI}"`) && !vivHome.text.includes(`tag=${SI}`) &&
+    !vivHome.text.includes(`data-bell="${SI}"`), "a guest's home shows Activities, with I'm interested (no Schedule it, no bell)");
+  const vj = await capi("/squadup/api/interest", { tag_id: SI, on: true }, kv.cookie);
+  check(vj.status === 200 && (await db.subscribersOfTag(SI)).some(x => x.id === viv.id), "a guest can say they're interested");
+  check((await capi("/squadup/api/interest", { tag_id: SI, muted: true }, kv.cookie)).status === 403, "guests have no bell to turn off");
+  check((await capi("/squadup/api/tag-new", { name: "Guest idea" }, kv.cookie)).status === 403, "guests can't add activities");
+  const willHomeG = (await getPage(`/squadup/p/${will.token}`)).text;
+  check(/<span class="gname"[^>]*>Viv<\/span>/.test(willHomeG) && willHomeG.includes("</span> = guest"), "guests show in navy italics, with a short key (Italic = guest)");
+  const putTime = (await getPage(`/squadup/new?t=${will.token}&tag=${SI}`)).text;
+  check(/Interested: <span class="gname"[^>]*>Viv<\/span>/.test(putTime) && /let them know yourself/.test(putTime),
+    "scheduling it shows who's interested, and that guests need a heads-up");
+  lbox.length = 0;
+  const sailPlan = (await api("/squadup/api/activity", { token: will.token, title: "Sunset sail", tag_id: SI, primary: "2030-06-01T19:00" })).body.id;
+  check(!!sailPlan && !lbox.some(m => m.to.id === viv.id), "scheduling it never messages the guest");
+
+  console.log("\n=== squad members ===");
+  const memR = await fetch(B + `/squadup/members?t=${will.token}`);
+  const mem = await memR.text();
+  check(memR.status === 200 && /<h1>Squad members<\/h1>/.test(mem), "members open the squad list");
+  const willRow = mem.slice(mem.indexOf(`id="m-${willP.id}"`), mem.indexOf("</details>", mem.indexOf(`id="m-${willP.id}"`)));
+  check(willRow.includes(">Will<") && willRow.includes(">You<") && willRow.includes(">Sunset sail</a>"),
+    "each person opens to show what they're interested in (and you're marked You)");
+  check(mem.includes("<h2>Guests</h2>") && /class="memname gname">Viv</.test(mem.slice(mem.indexOf("<h2>Guests</h2>"))),
+    "guests are listed separately, in navy italics");
+  const memMain = mem.slice(mem.indexOf("<main"));
+  check(!/@x\.test/.test(memMain) && !/\(239\)/.test(memMain), "no emails or phone numbers on the list (only your own, in your menu)");
+  check(/\d+ members and \d+ guests\./.test(mem), "with a count of each");
+  check((await cget("/squadup/members", kv.cookie)).status === 200, "guests can see it too");
+  const anonMem = await fetch(B + "/squadup/members", { redirect: "manual" });
+  check(anonMem.status === 302 && /\/squadup\/login/.test(anonMem.headers.get("location")), "anyone else is sent to log in");
+  const willMenu = (await getPage(`/squadup/p/${will.token}`)).text;
+  check(/<summary aria-label="Your account menu"[^>]*><span class="avatar" style="--h:\d+" aria-hidden="true">W<\/span>/.test(willMenu),
+    "the account menu shows your initial");
+  check(willMenu.includes(`href="/squadup/account?t=${will.token}">Your account</a>`) && willMenu.includes(">Squad members</a>") &&
+    willMenu.includes(">Past plans</a>") && willMenu.includes('href="/squadup/logout">Log out</a>'), "and opens to Your account, Squad members, Past plans and Log out");
+  check((await fetch(B + "/squadup/account", { redirect: "manual" })).status === 302, "Your account needs you logged in");
+  check((await cget("/squadup/account", kv.cookie)).status === 302, "and isn't for guests");
+
+  console.log("\n=== your account ===");
+  const acct = await capi("/squadup/api/signup", { name: "Quinn", email: "quinn@x.test", phone: "(239) 555-0144" });
+  const quinn = await db.getPersonByEmail("quinn@x.test");
+  const qHome = await cget("/squadup/p/" + quinn.personal_token);
+  check(qHome.text.includes('<details class="acct">') && qHome.text.includes(`/squadup/account?t=${quinn.personal_token}`) &&
+    qHome.text.includes(`/squadup/members?t=${quinn.personal_token}`) && !qHome.text.includes("Delete my account"),
+    "the home page has the account menu at the top right, and no account section");
+  const qAcct = await cget("/squadup/account?t=" + quinn.personal_token);
+  check(qAcct.status === 200 && qAcct.text.includes("Log out of all other devices") && qAcct.text.includes("Delete my account") &&
+    qAcct.text.includes(">Edit your info<"), "Your account has Edit your info, Log out of all other devices and Delete my account");
+  const rs = await capi("/squadup/api/reset-link", { token: quinn.personal_token });
+  const quinn2 = await db.getPerson(quinn.id);
+  check(rs.status === 200 && rs.cookie === quinn2.personal_token && !(await db.getPersonByToken(quinn.personal_token)),
+    "logging out everywhere else: the old key stops working, this browser keeps going");
+  // things Quinn organizes
+  const qPlan = (await api("/squadup/api/activity", { token: quinn2.personal_token, title: "Board games", tag_name: "Games", primary: "2030-07-01T19:00" })).body.id;
+  const qPast = (await api("/squadup/api/activity", { token: quinn2.personal_token, title: "Old hike", tag_name: "Hiking", primary: "2030-07-02T09:00" })).body.id;
+  const qPastOpt = (await db.listOptions(qPast))[0];
+  await db.updateOption(qPastOpt.id, { starts_at: "2020-01-01T09:00" });
+  await api("/squadup/api/rsvp", { token: danielle.token, activity_id: qPlan, option_ids: [(await db.listOptions(qPlan))[0].id] });
+  const qPoll = (await api("/squadup/api/poll", { token: quinn2.personal_token, title: "Brunch spot", tag_name: "Dining", options: [{ day: "2030-08-01" }] })).body.id;
+  await api("/squadup/api/poll-vote", { poll_id: qPoll, token: will.token, option_ids: [(await db.listPollOptions(qPoll))[0].id] });
+  const qAct = (await api("/squadup/api/tag-new", { token: quinn2.personal_token, name: "Quinn's activity" })).body.id;
+  await api("/squadup/api/rsvp", { token: quinn2.personal_token, activity_id: LP, option_ids: [lpOpts[0].id] });
+  // things Quinn did in the past, which stay as [Deleted]
+  await db.upsertResponse({ activity_id: qPast, person_id: quinn.id, option_ids: [qPastOpt.id], can_make_it: true });
+  await db.addComment({ kind: "activity", id: qPast, person_id: quinn.id, body: "Great hike, thanks all" });
+  const wOpen = (await api("/squadup/api/poll", { token: will.token, title: "Open vote", tag_name: "Dining", options: [{ day: "2031-08-01" }] })).body.id;
+  const wDone = (await api("/squadup/api/poll", { token: will.token, title: "Done vote", tag_name: "Dining", options: [{ day: "2031-08-02" }] })).body.id;
+  for (const pid of [wOpen, wDone])
+    await api("/squadup/api/poll-vote", { poll_id: pid, token: quinn2.personal_token, option_ids: [(await db.listPollOptions(pid))[0].id] });
+  await db.updatePoll(wDone, { finalized_at: new Date().toISOString() });
+  const qHome2 = (await getPage("/squadup/account?t=" + quinn2.personal_token)).text;
+  check(qHome2.includes("show as <b>[Deleted]</b>") && qHome2.includes("delete it first"),
+    "the delete box says comments and past answers stay as [Deleted]");
+  check(qHome2.includes("These will be canceled") && qHome2.includes("<li>Board games</li>") && qHome2.includes("Brunch spot (finding a time)") &&
+        !qHome2.includes("<li>Old hike</li>"),
+    "Delete my account lists the upcoming plans and polls it would cancel");
+  lbox.length = 0;
+  check((await api("/squadup/api/delete-account", { token: quinn2.personal_token })).status === 400, "it needs a confirm");
+  const del = await capi("/squadup/api/delete-account", { token: quinn2.personal_token, confirm: true });
+  const gone = await db.getPerson(quinn.id);
+  check(del.status === 200 && /squadup=;/.test(del.raw || "") && gone && gone.deleted_at && gone.name === "[Deleted]" &&
+    !gone.email && !gone.phone && gone.opted_out_at && !(await db.getPersonByToken(quinn2.personal_token)),
+    "deleting the account wipes their name, email, phone and key, and logs the browser out");
+  const byPh = await db.getPersonByPhone("+12395550144");
+  check(!(await db.getPersonByEmail("quinn@x.test")) && (!byPh || byPh.id !== quinn.id),
+    "nothing can find them by email or phone any more");
+  check((await db.getActivity(qPlan)).canceled_at && lbox.some(m => m.to.id === danielleId && /Board games is off/.test(m.subject)),
+    "upcoming plans they organized are called off, and everyone in is told");
+  check(!(await db.listPolls()).some(x => x.id === qPoll) && lbox.some(m => m.to.id === willId && /Brunch spot is off/.test(m.subject)),
+    "open polls close, and voters are told");
+  const qa = await db.getTag(qAct);
+  check(qa && !qa.archived_at && !(await db.subscribersOfTag(qAct)).length, "activities they added stay on the list, without their interest");
+  const pastNow = await db.getActivity(qPast);
+  check(pastNow && !pastNow.canceled_at, "past plans they organized stay");
+  const pastPage = (await getPage(`/squadup/a/${qPast}?t=${gin.token}`)).text;
+  check(pastPage.includes("by [Deleted]") && !pastPage.includes("Quinn"), "shown as by [Deleted], never their name");
+  check((await db.listResponses(qPast)).some(r => r.person_id === quinn.id), "their answers on past plans stay");
+  check(!(await db.listPollVotes(wOpen)).some(v => v.person_id === quinn.id) &&
+    (await db.listPollVotes(wDone)).some(v => v.person_id === quinn.id && v.name === "[Deleted]"),
+    "their votes on open polls go; votes on decided polls stay");
+  check(/<b class="">\[Deleted\]<\/b>/.test(pastPage) && pastPage.includes("Great hike, thanks all"),
+    "and so do their comments, as [Deleted] (not styled as a guest)");
+  const memPg = (await getPage(`/squadup/members?t=${gin.token}`)).text;
+  check(!memPg.includes("[Deleted]") && !memPg.includes(">Quinn<"), "deleted accounts aren't on Squad members");
+  const back = await capi("/squadup/api/signup", { name: "Quinn", email: "quinn@x.test" });
+  check(back.status === 200 && back.body.token && (await db.getPersonByEmail("quinn@x.test")).id !== quinn.id,
+    "they can come back later with the same name and email, as a new account");
+  check((await capi("/squadup/api/guest", { name: "[deleted]" })).status === 409, "nobody can take the name [Deleted]");
+  check(!(await db.listResponses(LP)).some(r => r.person_id === quinn.id), "their answers are gone");
+  check(lbox.some(m => m.to.id === quinn.id && /account is deleted/.test(m.subject)), "and they get a last note saying so");
+  check((await getPage(`/squadup/a/${qPast}?t=${gin.token}`)).status === 200, "the past plan still opens for everyone else");
+
+  console.log("\n=== confirming an email-only account ===");
+  lbox.length = 0;
+  const eo = await capi("/squadup/api/signup", { name: "Ellis", email: "ellis@x.test", noConfirm: true });
+  const ellis = await db.getPersonByEmail("ellis@x.test");
+  check(eo.status === 200 && eo.body.confirmEmail === true && ellis.email_confirmed_at === null,
+    "signing up with only an email needs it confirmed");
+  const cmail = lbox.find(m => m.to.id === ellis.id);
+  check(lbox.length === 1 && cmail && /Confirm your email/.test(cmail.subject) && /\/squadup\/in\//.test(cmail.url),
+    "the only message is a confirm link");
+  const eHome = await cget("/squadup/p/" + ellis.personal_token);
+  check(eHome.text.includes("Confirm your email") && eHome.text.includes("Send again"), "their page asks them to confirm their email");
+  lbox.length = 0;
+  await api("/squadup/api/invite", { token: gin.token, activity_id: LP, person_ids: [ellis.id] });
+  check(!lbox.some(m => m.to.id === ellis.id), "nothing else reaches them until they confirm");
+  const rsend = await api("/squadup/api/confirm-resend", { token: ellis.personal_token });
+  check(rsend.status === 200 && lbox.some(m => m.to.id === ellis.id && /Confirm your email/.test(m.subject)), "Send it again sends another");
+  const tap = await cget(cmail.url.replace(/^https?:\/\/[^/]+/, ""));
+  check(tap.status === 302 && !!(await db.getPerson(ellis.id)).email_confirmed_at, "tapping the link confirms it (and logs them in)");
+  lbox.length = 0;
+  const LP2 = (await api("/squadup/api/activity", { token: gin.token, title: "Kiln day", tag_name: "Creative", primary: "2030-10-12T10:00" })).body.id;
+  await api("/squadup/api/invite", { token: gin.token, activity_id: LP2, person_ids: [ellis.id] });
+  check(lbox.some(m => m.to.id === ellis.id && /invited you/.test(m.subject)), "after that, invites reach them");
+  const withPhone = await capi("/squadup/api/signup", { name: "Parker", email: "parker@x.test", phone: "(239) 555-0199" });
+  check(withPhone.body.confirmEmail === false && !!(await db.getPersonByEmail("parker@x.test")).email_confirmed_at,
+    "with a phone number too, there's nothing to confirm");
+  lbox.length = 0;
+  await api("/squadup/api/me", { token: ellis.personal_token, name: "Ellis", email: "ellis.new@x.test" });
+  check((await db.getPerson(ellis.id)).email_confirmed_at === null && lbox.some(m => m.to.id === ellis.id && /Confirm/.test(m.subject)),
+    "changing the email of an email-only account confirms the new one");
+
+  console.log("\n=== calendars and link previews ===");
+  const calPg = (await getPage(`/squadup/a/${LP2}?t=${gin.token}`)).text;
+  check(calPg.includes("Add to calendar") && calPg.includes(`/squadup/a/${LP2}/cal.ics`) && calPg.includes("calendar.google.com/calendar/render"),
+    "plans have Add to calendar, for Apple/Outlook and Google");
+  const icsR = await fetch(`${B}/squadup/a/${LP2}/cal.ics`);
+  const icsT = await icsR.text();
+  const kilnUtc = C.stampToDate("2030-10-12T10:00", "America/New_York");
+  check(icsR.status === 200 && /text\/calendar/.test(icsR.headers.get("content-type")) && icsT.includes("SUMMARY:Kiln day") &&
+        icsT.includes("DTSTART:" + kilnUtc.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "")) && icsT.includes("DTSTART:20301012T140000Z"),
+    "the calendar file has the plan at the right moment (10am Eastern = 14:00 UTC)");
+  check(calPg.includes("20301012T140000Z%2F20301012T160000Z"), "Google gets the same two-hour slot");
+  const gatePv = await cget(`/squadup/a/${LP2}`);
+  check(/<meta property="og:title" content="Gin invited you: Kiln day">/.test(gatePv.text) && gatePv.text.includes('og:image" content="http://127.0.0.1:3777/squadup/og.png"') &&
+        /og:description" content="Sat Oct 12, 10am\. Say if you can make it\."/.test(gatePv.text),
+    "a shared link shows who invited you, what and when when it's pasted in a text");
+  const ogR = await fetch(`${B}/squadup/og.png`);
+  check(ogR.status === 200 && ogR.headers.get("content-type") === "image/png", "with a picture");
+
+  console.log("\n=== a new time on the same day is a quiet tweak ===");
+  const TW = (await api("/squadup/api/activity", { token: gin.token, title: "Tacos", tag_name: "Dining",
+    primary: "2030-11-20T18:00", backup: "2030-11-21T18:00" })).body.id;
+  const twOpts = (await db.listOptions(TW)).sort((x, y) => x.starts_at.localeCompare(y.starts_at));
+  await api("/squadup/api/rsvp", { token: danielle.token, activity_id: TW, option_ids: twOpts.map(o => o.id) });
+  lbox.length = 0;
+  const tw1 = await api("/squadup/api/activity-edit", { token: gin.token, activity_id: TW, title: "Tacos", tag_id: (await db.getActivity(TW)).tag_id,
+    primary: "2030-11-20T19:30", backup: "2030-11-21T17:00" });
+  const twR = (await db.listResponses(TW)).find(r => r.person_id === danielleId);
+  check(tw1.status === 200 && !tw1.body.notified && lbox.length === 0, "changing only the time of day messages nobody");
+  check(twR.option_ids.length === 2, "and everyone's answers stay");
+  check((await db.listOptions(TW)).some(o => o.starts_at === "2030-11-20T19:30"), "the new time is saved");
+  const tw2 = await api("/squadup/api/activity-edit", { token: gin.token, activity_id: TW, title: "Tacos", tag_id: (await db.getActivity(TW)).tag_id,
+    primary: "2030-11-22T19:30", backup: "2030-11-21T17:00" });
+  const twR2 = (await db.listResponses(TW)).find(r => r.person_id === danielleId);
+  check(tw2.body.notified && lbox.some(m => m.to.id === danielleId && /Tacos changed/.test(m.subject)) && twR2.option_ids.length === 1,
+    "a different day still tells everyone and asks again for that day");
+
+  console.log("\n=== the organizer decides what goes out ===");
+  lbox.length = 0;
+  const tw3 = await api("/squadup/api/activity-edit", { token: gin.token, activity_id: TW, title: "Tacos", tag_id: (await db.getActivity(TW)).tag_id,
+    primary: "2030-11-25T19:30", backup: "2030-11-21T17:00", location: "Rosa's", notify: false });
+  check(tw3.status === 200 && tw3.body.changed && !tw3.body.notified && lbox.length === 0 &&
+        (await db.getActivity(TW)).location === "Rosa's", "\"Just save\" saves a new day and place without messaging anyone");
+  const twOpts2 = (await db.listOptions(TW)).sort((x, y) => x.starts_at.localeCompare(y.starts_at));
+  const twLocked = (await db.getActivity(TW)).locked_option_id;
+  const twBack = twOpts2.find(o => o.id !== twLocked);
+  const lq = await api("/squadup/api/lock", { token: gin.token, activity_id: TW, option_id: twBack.id, notify: false });
+  check(lq.status === 200 && (await db.getActivity(TW)).locked_option_id === twBack.id && lbox.length === 0,
+    "\"Just make it the plan\" moves it quietly");
+  await api("/squadup/api/suggest", { token: danielle.token, activity_id: TW, starts_at: "2030-11-26T18:00" });
+  const sugOpt = (await db.listOptions(TW)).find(o => o.status === "pending");
+  check(lbox.some(m => m.to.id === ginId && /suggested another time/.test(m.subject)), "a suggestion still reaches the organizer (the suggester pressed Send)");
+  lbox.length = 0;
+  await api("/squadup/api/option-decide", { token: gin.token, option_id: sugOpt.id, approve: true, notify: false });
+  check((await db.getOption(sugOpt.id)).status === "approved" && lbox.length === 0, "\"Just add it\" adds the time quietly");
+  await api("/squadup/api/cancel", { token: gin.token, activity_id: TW, notify: false });
+  check(!!(await db.getActivity(TW)).canceled_at && lbox.length === 0, "\"Delete quietly\" deletes without a word");
+  const invPage = (await getPage(`/squadup/a/${LP}?t=${gin.token}`)).text;
+  check(/data-via="email"[^>]*>[^<]+<span class="via">email<\/span>/.test(invPage) && invPage.includes("Send invites") && invPage.includes('id="invnote"'),
+    "the invite picker says how each person will hear (text or email), and Send says what goes out");
+  const editPg = (await getPage(`/squadup/edit/${LP}?t=${gin.token}`)).text;
+  check(editPg.includes("ORIG=") && editPg.includes("askSend("), "the edit page asks before telling anyone (when you save)");
+
+  console.log("\n=== new categories: people opt in ===");
+  lbox.length = 0;
+  const NC = (await api("/squadup/api/activity", { token: gin.token, title: "Axe night", tag_name: "Axe throwing", keepNew: true,
+    primary: "2030-12-01T19:00" })).body.id;
+  const ncTag = (await db.getActivity(NC)).tag_id;
+  const ncSubs = await db.subscribersOfTag(ncTag);
+  check(ncSubs.length === 1 && ncSubs[0].id === ginId, "a new category is followed only by whoever made it");
+  check(!lbox.some(m => m.to.id !== ginId), "so its first plan messages nobody else");
+  const dHome = (await getPage(`/squadup/p/${danielle.token}`)).text;
+  check(dHome.includes(`/squadup/a/${NC}?`) && /Axe throwing <span class="newtag">New<\/span>/.test(dHome),
+    "everyone sees it on their page, marked New, with its plan showing");
+  await api("/squadup/api/subscribe", { token: danielle.token, tag_id: ncTag, on: true });
+  const dHome2 = (await getPage(`/squadup/p/${danielle.token}`)).text;
+  check(!/Axe throwing <span class="newtag">/.test(dHome2), "tapping it turns it on, and it's not new to them any more");
+  db._raw().tags.find(x => x.id === ncTag).created_at = new Date(Date.now() - 40 * 864e5).toISOString();
+  check(!(await getPage(`/squadup/p/${will.token}`)).text.includes(`/squadup/a/${NC}?`), "after a month, it's like any category they don't follow");
+
+  console.log("\n=== time zones ===");
+  // 11:30pm in Florida is already tomorrow in UTC
+  const lateNight = new Date("2026-10-20T03:30:00Z");
+  check(C.toLocalStamp(lateNight) === "2026-10-19T23:30", "\"now\" is worked out in the home zone, not the server's clock");
+  check(!C.isOver("2026-10-19T20:00", lateNight, "America/New_York") && C.isOver("2026-10-19T20:00", lateNight, "Europe/London"),
+    "a plan tonight isn't over until the day ends where the plan is");
+  check(C.needsReminder({ locked_option_id: "o", timezone: "America/Denver" }, [{ id: "o", starts_at: "2026-10-21T19:00" }], new Date("2026-10-21T01:30:00Z")) &&
+        !C.needsReminder({ locked_option_id: "o", timezone: "America/Denver" }, [{ id: "o", starts_at: "2026-10-21T19:00" }], new Date("2026-10-21T00:30:00Z")),
+    "the reminder counts its 24 hours from the plan's own time zone");
+  lbox.length = 0;
+  const den = (await api("/squadup/api/activity", { token: gin.token, title: "Ski day", tag_name: "Skiing",
+    primary: "2030-01-12T09:00", timezone: "America/Denver" })).body.id;
+  check((await db.getActivity(den)).timezone === "America/Denver", "a plan keeps the zone it was made in");
+  check(lbox.some(m => /Sat Jan 12, 9am MST/.test(m.subject)), "messages say which zone when it isn't home time");
+  const denPg = (await getPage(`/squadup/a/${den}?t=${gin.token}`)).text;
+  check(denPg.includes('data-at="2030-01-12T09:00" data-tz="America/Denver"'), "the page marks the time with its zone, for the \"your time\" note");
+  check(icsOf(await (await fetch(`${B}/squadup/a/${den}/cal.ics`)).text()) === "20300112T160000Z", "and calendars get it right (9am Mountain = 16:00 UTC)");
+  const bogus = (await api("/squadup/api/activity", { token: gin.token, title: "Odd", tag_name: "Skiing",
+    primary: "2030-01-13T09:00", timezone: "Mars/Olympus" })).body.id;
+  check((await db.getActivity(bogus)).timezone === "America/New_York", "a made-up zone falls back to home");
+  const editZ = await api("/squadup/api/activity-edit", { token: gin.token, activity_id: den, title: "Ski day", tag_id: (await db.getActivity(den)).tag_id,
+    primary: "2030-01-12T09:00", timezone: "America/New_York" });
+  check(editZ.status === 200 && (await db.getActivity(den)).timezone === "America/New_York" && editZ.body.notified,
+    "changing a plan's zone counts as a change of time");
+  }
+
+  notifier.send = realSendL;
+
+  console.log("\n=== look and feel ===");
+  const K = require("./lib/colors.js");
+  check(K.tagHue("Beach") === K.tagHue("Kayaking") && K.tagHue("Hiking") === K.tagHue("Camping") && K.tagHue("Beach") === K.tagHue("Hiking"),
+    "outdoor and water categories are all Active");
+  const six = ["Dining", "Party", "Active", "Creative", "Entertainment", "Games"].map(n => K.tagHue(n));
+  check(new Set(six).size === 6, "the six main categories each have their own color");
+  check(K.tagHue("Party") === 44 && K.tagHue("Active") === 140 && K.tagHue("Dining") === 4 && K.tagHue("Entertainment") === 218,
+    "Party is gold, Active green, Dining red, Entertainment blue");
+  check(K.tagHue("Creative") === 172 && K.tagHue("Games") === 262, "Creative and Games keep the colors they landed on");
+  check(K.tagHue("Brunch") === K.tagHue("Dining") && K.tagHue("Concert") === K.tagHue("Entertainment"),
+    "specific names land in the right main category");
+  check(K.tagHue("Brunch") !== K.tagHue("Running"), "'run' doesn't match inside 'brunch'");
+  check(K.tagHue("Knitting") === K.tagHue("knitting"), "an unrecognized category still gets a steady color");
+  const dash = await getPage(`/squadup/p/${danielle.token}`);
+  check(/href="\/squadup\/a\/[^"?]+\?t=/.test(dash.text),
+    "plans on the home page open with your link, so you can vote");
+  check(dash.text.includes("--h:"), "cards carry their category color");
+  check(!/no app, no password|Nobody gets notified when you join/.test(dash.text),
+    "explanatory paragraphs are gone");
+
+  console.log("\n=== speed ===");
+  {
+    const http = require("http"), zlib = require("zlib");
+    const raw = (path, headers) => new Promise((resolve, reject) => {
+      http.get(B + path, { headers: headers || {} }, r => {
+        const parts = []; r.on("data", d => parts.push(d));
+        r.on("end", () => resolve({ status: r.statusCode, headers: r.headers, body: Buffer.concat(parts) }));
+      }).on("error", reject);
+    });
+    const home = `/squadup/p/${danielle.token}`;
+    const zipped = await raw(home, { "Accept-Encoding": "gzip, deflate, br" });
+    const plain = await raw(home);
+    check(zipped.headers["content-encoding"] === "gzip", "pages go out gzipped when the browser accepts it");
+    const unzipped = zlib.gunzipSync(zipped.body).toString();
+    check(unzipped === plain.body.toString() && /Squad Up/.test(unzipped), "and unzip to exactly the same page");
+    check(zipped.body.length < plain.body.length * 0.4,
+      `gzipped page is much smaller (${zipped.body.length} vs ${plain.body.length} bytes)`);
+    check(!plain.headers["content-encoding"], "a client that can't unzip gets the plain page");
+    const api1 = await raw("/squadup/api/nothing", { "Accept-Encoding": "gzip" });
+    check(api1.status === 404, "other answers still work with gzip asked for");
+
+    // the shared styles and script are files the browser keeps
+    const v = (/app\.css\?v=([0-9a-f]+)/.exec(unzipped) || [])[1];
+    check(!!v && unzipped.includes(`/squadup/app.js?v=${v}`), "pages link the shared style and script files");
+    check(!unzipped.includes("--stripe-a"), "the styles aren't repeated inside every page any more");
+    const css = await raw(`/squadup/app.css?v=${v}`, { "Accept-Encoding": "gzip" });
+    check(css.status === 200 && /text\/css/.test(css.headers["content-type"]) &&
+      /immutable/.test(css.headers["cache-control"]) && zlib.gunzipSync(css.body).toString().includes(":root"),
+      "app.css comes with a year-long cache");
+    const js = await raw(`/squadup/app.js?v=${v}`);
+    check(js.status === 200 && /javascript/.test(js.headers["content-type"]) && js.body.toString().includes("addEventListener"),
+      "app.js is served too");
+    const stale = await raw(`/squadup/app.css?v=oldversion`);
+    check(stale.status === 200 && stale.headers["cache-control"] === "no-cache", "an old version link still gets the current styles, uncached");
+    check(!css.headers["set-cookie"], "the shared files don't touch the log-in cookie");
+
+    // database calls on the home page don't grow with the number of plans
+    const calls = h => +((/desc="(\d+) database calls"/.exec(h["server-timing"] || "") || [])[1]);
+    const before = calls(plain.headers);
+    check(before > 0 && before < 30, `the home page makes a handful of database calls (${before})`);
+    for (let i = 0; i < 6; i++)
+      await api("/squadup/api/activity", { token: danielle.token, title: "Speed test " + i, tag_name: "Bowling",
+        primary: C.toLocalStamp(new Date(Date.now() + (5 + i) * 864e5)).slice(0, 10) + "T19:00" });
+    const after = calls((await raw(home)).headers);
+    check(after === before, `six more plans, same number of calls (${before} then ${after})`);
+
+    // one read per question per page, and every caller gets its own copy
+    const st = { t0: Date.now(), calls: 0, dbMs: 0, memo: new Map() };
+    await require("./server/index.js")._reqStore.run(st, async () => {
+      const dp = await db.getPersonByToken(danielle.token);
+      const a1 = await db.getPerson(dp.id); a1.name = "Changed Here Only";
+      const a2 = await db.getPerson(dp.id);
+      check(a2.name !== "Changed Here Only", "a remembered answer is a fresh copy for each caller");
+      const n = st.calls;
+      await db.getPerson(dp.id);
+      check(st.calls === n, "asking the same thing twice in one page load costs nothing");
+      await db.updatePerson(dp.id, { name: dp.name });
+      await db.getPerson(dp.id);
+      check(st.calls === n + 2, "a write clears what was remembered, so the next read is fresh");
+    });
+
+    // the bulk reads match the one-at-a-time ones
+    const acts = (await db.listActivities()).map(a => a.id);
+    const key = r => (r.id || "") + (r.activity_id || "") + (r.person_id || "");
+    const sorted = rows => rows.map(key).sort().join(",");
+    const oneByOne = async f => (await Promise.all(acts.map(f))).flat();
+    check(sorted(await db.listOptionsForActivities(acts)) === sorted(await oneByOne(id => db.listOptions(id))),
+      "all plans' times in one read match reading them one by one");
+    check(sorted(await db.listResponsesForActivities(acts)) === sorted(await oneByOne(id => db.listResponses(id))),
+      "all plans' answers in one read match too");
+    const pids = (await db.listPolls()).map(x => x.id);
+    check(pids.length > 0 && sorted(await db.listPollVotesForPolls(pids)) ===
+      sorted((await Promise.all(pids.map(id => db.listPollVotes(id)))).flat()), "and so do polls' answers");
+    check((await db.listOptionsForActivities([])).length === 0, "an empty list reads nothing");
+
+    // slow requests are logged without anyone's key
+    process.env.SQUAD_TIMING = "on";
+    const logged = [], orig = console.log;
+    console.log = (...a) => { logged.push(a.join(" ")); };
+    await raw(home);
+    await new Promise(r => setTimeout(r, 50));
+    console.log = orig;
+    delete process.env.SQUAD_TIMING;
+    const line = logged.find(l => l.startsWith("timing GET")) || "";
+    check(/\/squadup\/p\/… 200 \d+ms -- \d+ database calls/.test(line), "the timing log says how long a page took: " + line);
+    check(!logged.join("\n").includes(danielle.token), "and never prints anyone's log-in key");
+  }
+
+  console.log("\n=== backups ===");
+  {
+    const S = require("./server/index.js");
+    const b = await S.makeBackup(new Date());
+    const tables = Object.keys(b.tables);
+    check(b.app === "Squad Up" && tables.length === 16 && tables.every(t => t.startsWith("squad_")),
+      "a backup holds all 16 tables");
+    check(b.tables.squad_people.length === (await db.listPeople()).length && b.counts.squad_people === b.tables.squad_people.length,
+      `with every person in it (${b.counts.squad_people}) and a count of each table`);
+    check(b.tables.squad_responses.length > 0 && b.tables.squad_poll_votes.length > 0, "answers and votes included");
+
+    // download on demand, only with the secret
+    const noSecret = await getPage("/squadup/cron/backup");
+    check(noSecret.status === 403 && /CRON_SECRET/.test(noSecret.text), "no download until CRON_SECRET is set");
+    process.env.CRON_SECRET = "test-cron-secret";
+    check((await getPage("/squadup/cron/backup?key=wrong")).status === 403, "a wrong key is refused");
+    const r = await fetch(B + "/squadup/cron/backup?key=test-cron-secret");
+    const file = await r.json();
+    check(r.status === 200 && /attachment; filename="squad-up-backup-\d{4}-\d\d-\d\d\.json"/.test(r.headers.get("content-disposition")),
+      "the right key downloads it as a dated file");
+    check(file.tables && file.tables.squad_people.length === b.counts.squad_people, "and it's the whole thing");
+    check(r.headers.get("cache-control") === "no-store", "never cached along the way");
+
+    // emailing it
+    const sent = [];
+    const realEmailFile = S.notifier.emailFile;
+    S.notifier.emailFile = async (...args) => { sent.push(args); return { ok: true }; };
+    const skipped = await (await fetch(B + "/squadup/cron/backup?key=test-cron-secret&send=email")).json();
+    check(/SQUAD_BACKUP_EMAIL/.test(skipped.skipped || "") && sent.length === 0, "no backup address, no email");
+    process.env.SQUAD_BACKUP_EMAIL = "owner@x.test";
+    const now1 = await (await fetch(B + "/squadup/cron/backup?key=test-cron-secret&send=email")).json();
+    check(sent.length === 1 && sent[0][0] === "owner@x.test" && now1.emailed === "o…@x.test",
+      "send=email emails it now (and the answer doesn't show the whole address)");
+    const att = JSON.parse(sent[0][4]);
+    check(/^squad-up-backup-.*\.json$/.test(sent[0][3]) && att.tables.squad_people.length > 0, "the file is attached");
+    check(/Keep this file private/.test(sent[0][2]) && /people: \d+/.test(sent[0][2]), "the email lists what's inside and says to keep it private");
+
+    // nightly: once, between 3 and 4 a.m. squad time
+    sent.length = 0;
+    const at = stamp => C.stampToDate(stamp, C.HOME_ZONE);
+    check(await S.runBackupIfDue(at("2031-03-04T02:50")) === null && sent.length === 0, "nothing before 3 a.m.");
+    await S.runBackupIfDue(at("2031-03-04T03:05"));
+    check(sent.length === 1, "one backup a little after 3 a.m.");
+    await S.runBackupIfDue(at("2031-03-04T03:15"));
+    await S.runBackupIfDue(at("2031-03-04T03:55"));
+    check(sent.length === 1, "and not again that night, however often the cron pings");
+    await S.runBackupIfDue(at("2031-03-04T14:00"));
+    check(sent.length === 1, "nothing in the afternoon (a restart doesn't send an extra one)");
+    await S.runBackupIfDue(at("2031-03-05T03:10"));
+    check(sent.length === 2, "the next night, another");
+    let tries = 0;
+    S.notifier.emailFile = async () => { tries++; throw new Error("resend 500"); };
+    for (const m of ["00", "10", "20", "30", "40"]) await S.runBackupIfDue(at(`2031-03-06T03:${m}`));
+    check(tries === 3, "if the email fails it tries again, three times at most");
+    S.notifier.emailFile = async (...args) => { sent.push(args); return { ok: true }; };
+    delete process.env.SQUAD_BACKUP_EMAIL;
+    await S.runBackupIfDue(at("2031-03-07T03:10"));
+    check(sent.length === 2, "no address set, no nightly email");
+    S.notifier.emailFile = realEmailFile;
+
+    // the restore script reads the file without touching anything by default
+    const fs = require("fs"), path = "/tmp/squadup-backup-test.json";
+    fs.writeFileSync(path, JSON.stringify(file));
+    const out = require("child_process").execFileSync(process.execPath, ["tools/restore.js", path], { encoding: "utf8" });
+    check(/squad_people: \d+ rows/.test(out) && /Nothing changed\. Add --yes/.test(out), "restore.js shows what it would put back and waits for --yes");
+    const bad = require("child_process").spawnSync(process.execPath, ["tools/restore.js", "package.json"], { encoding: "utf8" });
+    check(bad.status === 1 && /isn't a Squad Up backup/.test(bad.stdout), "and refuses a file that isn't a backup");
+    const noEnv = require("child_process").spawnSync(process.execPath, ["tools/restore.js", path, "--yes"],
+      { encoding: "utf8", env: { ...process.env, SUPABASE_URL: "", SUPABASE_SERVICE_KEY: "" } });
+    check(noEnv.status === 1 && /Set SUPABASE_URL/.test(noEnv.stdout), "with --yes it needs the Supabase settings");
+    delete process.env.CRON_SECRET;
+  }
+
+  console.log("\n=== interest taps redraw the card (v1.5) ===");
+  {
+    const u = (await api("/squadup/api/signup", { name: "Tapper", email: "tapper@x.test" })).body;
+    const t = (await api("/squadup/api/tag-new", { token: gin.token, name: "Juggling" })).body;
+    const r = await api("/squadup/api/interest", { token: u.token, tag_id: t.id, on: true, card: 1 });
+    check(r.status === 200 && r.body.card && r.body.card.includes(`id="act-${t.id}"`) && r.body.card.includes("Interested ✓")
+      && r.body.card.includes("Tapper") && r.body.card.includes("data-bell"), "I'm interested sends back the card, redrawn with you on it");
+    const m = await api("/squadup/api/interest", { token: u.token, tag_id: t.id, muted: true, card: 1 });
+    check(m.body.card && m.body.card.includes("Messages off"), "so does the bell");
+    const plain = await api("/squadup/api/interest", { token: u.token, tag_id: t.id, on: false });
+    check(plain.status === 200 && !plain.body.card, "without asking, no card (smaller answer)");
+  }
+
+  console.log("\n=== the tour (v1.5) ===");
+  {
+    const nu = (await api("/squadup/api/signup", { name: "Tourist", email: "tour@x.test" })).body;
+    const home = await getPage(`/squadup/p/${nu.token}`);
+    check(home.text.includes('id="tourcard"') && home.text.includes("/squadup/tour.mp4?v="),
+      "a new account's first home page has the tour card with the video");
+    check(/<video muted playsinline[^>]*>/.test(home.text) && !/id="tourcard"[\s\S]*?<video[^>]*\sloop/.test(home.text.split("</video>")[0]),
+      "the first-run video is muted, inline, and doesn't loop");
+    check(home.text.includes("data-tourdone") && home.text.includes(">Skip<") && home.text.includes(">Got it<"),
+      "it has Skip, and Got it for the end");
+    const seen = await api("/squadup/api/tour-seen", { token: nu.token });
+    check(seen.status === 200, "Skip / Got it / watching to the end marks it seen");
+    const again = await getPage(`/squadup/p/${nu.token}`);
+    check(!again.text.includes('id="tourcard"'), "after that it never shows again");
+    check(again.text.includes('href="/squadup/how?t='), "the home page still links to How Squad Up works");
+    const p0 = await db.createPerson({ name: "Oldtimer", email: "old@x.test" });   // as if from before v1.5
+    check(!p0.tour && !(await getPage(`/squadup/p/${p0.personal_token}`)).text.includes('id="tourcard"'),
+      "people from before the tour never get it popped up");
+    check((await api("/squadup/api/tour-seen", { token: "nope" })).status >= 400, "marking it seen needs a real link");
+    // a guest who joins keeps having seen it
+    const tp = await db.getPersonByToken(nu.token);
+    check(tp.tour === "seen", "the seen mark is stored on the person");
+
+    const how = await getPage(`/squadup/how?t=${nu.token}`);
+    check(how.status === 200 && /<video[^>]*\sloop/.test(how.text) && how.text.includes("How Squad Up works")
+      && how.text.includes("Want to plan something?"), "How Squad Up works loops the video with the steps written out");
+    check((await getPage("/squadup/how")).status === 200, "How Squad Up works opens without logging in");
+    check(home.text.includes('href="/squadup/how?t=') && /acctmenu[\s\S]*How Squad Up works/.test(home.text),
+      "the account menu links to it");
+
+    const V = require("./lib/views.js"), M = V.media();
+    const full = await fetch(`${B}/squadup/tour.mp4?v=${M.v}`);
+    const buf = Buffer.from(await full.arrayBuffer());
+    check(full.status === 200 && full.headers.get("content-type") === "video/mp4" && buf.length === M.mp4.length
+      && full.headers.get("accept-ranges") === "bytes", "the video serves whole, saying it can send pieces");
+    check(/immutable/.test(full.headers.get("cache-control")), "with the right version it's cached for a year");
+    check(/no-cache/.test((await fetch(`${B}/squadup/tour.mp4?v=old`)).headers.get("cache-control")), "an old link isn't cached forever");
+    const part = await fetch(`${B}/squadup/tour.mp4`, { headers: { Range: "bytes=0-1" } });
+    const pb = Buffer.from(await part.arrayBuffer());
+    check(part.status === 206 && pb.length === 2 && part.headers.get("content-range") === `bytes 0-1/${M.mp4.length}`,
+      "Safari's two-byte probe gets exactly two bytes (206)");
+    const mid = await fetch(`${B}/squadup/tour.mp4`, { headers: { Range: "bytes=1000-" } });
+    check(mid.status === 206 && Buffer.from(await mid.arrayBuffer()).equals(M.mp4.subarray(1000)), "an open-ended range gets the rest");
+    const tail = await fetch(`${B}/squadup/tour.mp4`, { headers: { Range: "bytes=-500" } });
+    check(tail.status === 206 && Buffer.from(await tail.arrayBuffer()).equals(M.mp4.subarray(M.mp4.length - 500)), "a last-500-bytes range works");
+    check((await fetch(`${B}/squadup/tour.mp4`, { headers: { Range: `bytes=${M.mp4.length + 5}-` } })).status === 416,
+      "a range past the end is refused");
+    const head = await fetch(`${B}/squadup/tour.mp4`, { method: "HEAD" });
+    check(head.status === 200 && head.headers.get("content-length") === String(M.mp4.length), "HEAD answers with the size");
+    const jpg = await fetch(`${B}/squadup/tour.jpg?v=${M.v}`);
+    check(jpg.status === 200 && jpg.headers.get("content-type") === "image/jpeg", "the still serves too");
+
+    // guests who come in themselves get it once; guests someone added don't, until they show up
+    const gr = await fetch(`${B}/squadup/api/guest`, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Wanderer" }) });
+    const gck = (gr.headers.get("set-cookie") || "").split(";")[0];
+    const gh = await fetch(`${B}/squadup`, { headers: { Cookie: gck } });
+    check((await gh.text()).includes('id="tourcard"'), "a guest who came in themselves sees the tour once");
+  }
+
+  console.log("\n=== v1.6: invite list, log-in channel, comments ===");
+  {
+    const post = async (path, body, cookie) => {
+      if (path === "/squadup/api/signup") body = { agree: true, sms_consent: true, ...body };
+      const r = await fetch(B + path, { method: "POST", headers: { "Content-Type": "application/json", ...(cookie ? { Cookie: cookie } : {}) },
+        body: JSON.stringify(body || {}) });
+      return { status: r.status, body: await r.json().catch(() => ({})), cookie: (r.headers.get("set-cookie") || "").split(";")[0] };
+    };
+    const page = async (path, cookie) => (await fetch(B + path, { headers: cookie ? { Cookie: cookie } : {} })).text();
+    const org = (await api("/squadup/api/signup", { name: "Orsolya Q", email: "orla@x.test" })).body;
+    const both = (await api("/squadup/api/signup", { name: "Beatrix Q", email: "bea@x.test", phone: "(239) 555-0611" })).body;
+    const bystander = (await api("/squadup/api/signup", { name: "Calloway Q", email: "cal@x.test" })).body;
+    const orgP = await db.getPersonByToken(org.token), beaP = await db.getPersonByToken(both.token);
+    await db.updatePerson(beaP.id, { confirmed_at: new Date().toISOString() });
+
+    // 1. someone who answered from the link isn't offered as an invitee
+    const pl = await api("/squadup/api/activity", { token: org.token, title: "Taco night", tag_name: "Tacos", primary: "2031-05-02T19:00" });
+    const plOpts = await db.listOptions(pl.body.id);
+    await api("/squadup/api/rsvp", { token: both.token, activity_id: pl.body.id, option_ids: [plOpts[0].id] });
+    const outCal = await api("/squadup/api/rsvp", { token: bystander.token, activity_id: pl.body.id, cant: true });
+    const orgView = await page(`/squadup/a/${pl.body.id}?t=${org.token}`);
+    check(!orgView.includes(`data-invitee="${beaP.id}"`), "someone who already said yes isn't in the invite list");
+    const calP = await db.getPersonByToken(bystander.token);
+    check(outCal.status === 200 && !orgView.includes(`data-invitee="${calP.id}"`), "nor someone who said they can't make it");
+    const fresh = (await api("/squadup/api/signup", { name: "Delphine Q", email: "dee@x.test" })).body;
+    const deeP = await db.getPersonByToken(fresh.token);
+    check((await page(`/squadup/a/${pl.body.id}?t=${org.token}`)).includes(`data-invitee="${deeP.id}"`),
+      "people who haven't answered are still offered");
+    // everyone answers or is invited: the button stays, and says why it's empty
+    for (const t of [fresh.token]) await api("/squadup/api/rsvp", { token: t, activity_id: pl.body.id, option_ids: [plOpts[0].id] });
+    const everyone = (await db.listPeople()).filter(x => (x.email || x.phone) && !x.opted_out_at && !x.deleted_at && x.id !== orgP.id);
+    for (const x of everyone) {
+      const r = (await db.listResponses(pl.body.id)).some(r => r.person_id === x.id);
+      if (!r) await db.addInvite({ activity_id: pl.body.id, person_id: x.id, invited_by: orgP.id });
+    }
+    const full = await page(`/squadup/a/${pl.body.id}?t=${org.token}`);
+    check(full.includes('id="inviteopen"') && full.includes("Everyone's already invited or has answered.") && !full.includes('id="invitesend"'),
+      "with nobody left, + Invite people on Squad Up stays and opens to a short note");
+
+    // 2. the log-in link goes where they typed
+    const realSms = notifier.backends.sms, realSendV = notifier.send, got = [];
+    notifier.backends.sms = { kind: "sms", async send() {} };
+    notifier.send = async (p, m, ch) => { got.push({ to: p.id, ch: ch || notifier.channelFor(p), url: m.url }); return { ok: true }; };
+    check(notifier.channelFor(beaP) === "sms", "(set-up: Bea normally gets texts)");
+    got.length = 0;
+    await post("/squadup/api/login", { contact: "BEA@x.test" });
+    check(got.length === 1 && got[0].to === beaP.id && got[0].ch === "email", "typing an email sends the log-in link to that email, not their phone");
+    got.length = 0;
+    await post("/squadup/api/login", { contact: "239-555-0611" });
+    check(got.length === 1 && got[0].ch === "sms", "typing their number still texts it");
+    got.length = 0;
+    const again = await post("/squadup/api/signup", { name: "Beatrix again", email: "bea@x.test" });
+    check(again.body.via === "email" && got.length === 1 && got[0].ch === "email",
+      "signing up again with just their email emails the link, and says so");
+    notifier.backends.sms = realSms; notifier.send = realSendV;
+
+    // 3. comments
+    const PL = pl.body.id;
+    let c1 = await post("/squadup/api/comment", { token: both.token, activity_id: PL, body: "  I'll bring salsa\n\n\n\nand chips https://example.com/salsa.  " });
+    check(c1.status === 200 && c1.body.count === 1, "a member comments on a plan");
+    const row = (await db.listComments("activity", PL))[0];
+    check(row.body === "I'll bring salsa\n\nand chips https://example.com/salsa.", "extra blank lines and spaces are tidied");
+    check(c1.body.html.includes('<a href="https://example.com/salsa"') && c1.body.html.includes("</a>.") && c1.body.html.includes("<br>"),
+      "links are tappable (without the full stop) and line breaks kept");
+    check((await post("/squadup/api/comment", { token: both.token, activity_id: PL, body: "   " })).status === 400, "an empty comment is refused");
+    check((await post("/squadup/api/comment", { token: both.token, activity_id: PL, body: "x".repeat(1001) })).status === 400, "a very long one is refused");
+    check((await post("/squadup/api/comment", { activity_id: PL, body: "hi" })).status === 403, "you need to be someone to comment");
+    const xss = await post("/squadup/api/comment", { token: fresh.token, activity_id: PL, body: "<img src=x onerror=alert(1)> \"quoted\"" });
+    check(xss.status === 200 && !xss.body.html.includes("<img") && xss.body.html.includes("&lt;img"), "comments are shown as text, never as page code");
+
+    // a guest comments too, with their name in guest style
+    const g = await post("/squadup/api/guest", { name: "Wrenna Q" });
+    const gc = await post("/squadup/api/comment", { activity_id: PL, body: "Can I bring my cousin?" }, g.cookie);
+    check(gc.status === 200 && gc.body.count === 3 && /class="gname">Wrenna Q/.test(gc.body.html), "guests can comment, shown as guests");
+    const gview = await page(`/squadup/a/${PL}`, g.cookie);
+    check(gview.includes('id="cmtbox"') && gview.includes("Can I bring my cousin?"), "the plan page shows comments and a box to add one");
+    check((gview.match(/data-cdel=/g) || []).length === 1, "a guest can delete only their own comment");
+    const orgPage = await page(`/squadup/a/${PL}?t=${org.token}`);
+    check((orgPage.match(/data-cdel=/g) || []).length === 3, "the organizer can delete any comment on their plan");
+    check(orgPage.indexOf('id="comments"') < orgPage.indexOf('id="invited"'), "comments come before the invite section");
+
+    // deleting
+    const ids = (await db.listComments("activity", PL)).map(c => c.id);
+    check((await post("/squadup/api/comment-delete", { token: fresh.token, id: ids[0] })).status === 403, "you can't delete someone else's comment");
+    const del1 = await post("/squadup/api/comment-delete", { token: both.token, id: ids[0] });
+    check(del1.status === 200 && del1.body.count === 2, "you can delete your own");
+    const del2 = await post("/squadup/api/comment-delete", { token: org.token, id: ids[1] });
+    check(del2.status === 200 && del2.body.count === 1, "the organizer can delete anyone's");
+    check((await post("/squadup/api/comment-delete", { token: org.token, id: ids[1] })).status === 404, "deleting twice just says it's gone");
+
+    // nobody is messaged about comments
+    const quiet = [], realQ = notifier.send;
+    notifier.send = async (p, m) => { quiet.push(p.id); return { ok: true }; };
+    await post("/squadup/api/comment", { token: org.token, activity_id: PL, body: "Starts at 7 sharp" });
+    notifier.send = realQ;
+    check(quiet.length === 0, "commenting sends no texts or emails");
+
+    // home cards show the count
+    const home = await page(`/squadup/p/${both.token}`);
+    check(/aria-label="2 comments"/.test(home), "the plan's card on the home page shows its comment count");
+
+    // polls
+    const fp = await api("/squadup/api/poll", { token: org.token, title: "Hike day", tag_name: "Hiking", options: [{ day: "2031-06-07" }, { day: "2031-06-08" }] });
+    const pc = await post("/squadup/api/comment", { token: both.token, poll_id: fp.body.id, body: "Saturday is better for me" });
+    check(pc.status === 200 && pc.body.count === 1, "comments work on polls");
+    const pview = await page(`/squadup/f/${fp.body.id}?t=${org.token}`);
+    check(pview.includes("Saturday is better for me") && pview.includes('data-kind="poll"'), "and show on the poll page");
+    check(/aria-label="1 comment"/.test(await page(`/squadup/p/${org.token}`)), "the poll's card shows its count too");
+
+    // a guest who joins keeps their comments
+    const wrenP = await db.getPersonByToken(g.cookie.split("=")[1]);
+    const wrenC = await post("/squadup/api/comment", { poll_id: fp.body.id, body: "Either works" }, g.cookie);
+    check(wrenC.status === 200, "(guest comments on the poll)");
+    const merged = (await post("/squadup/api/signup", { name: "Wrenna Q", email: "wren@x.test" }, g.cookie));
+    const wrenM = await db.getPersonByEmail("wren@x.test");
+    check(merged.status === 200 && (await db.listComments("poll", fp.body.id)).some(c => c.person_id === wrenM.id),
+      "a guest who signs up keeps their comments");
+
+    // a deleted plan keeps its comments to read, but takes no new ones
+    await api("/squadup/api/cancel", { token: org.token, activity_id: PL, reason: "Rain" });
+    check((await post("/squadup/api/comment", { token: both.token, activity_id: PL, body: "aw" })).status === 400, "a deleted plan takes no new comments");
+    const gone = await page(`/squadup/a/${PL}?t=${both.token}`);
+    check(gone.includes("Starts at 7 sharp") && !gone.includes('id="cmtbox"'), "but its comments can still be read");
+
+    // deleting an account takes its comments with it
+    await db.deletePerson(beaP.id);
+    check(!(await db.listComments("poll", fp.body.id)).some(c => c.person_id === beaP.id), "a deleted account's comments go with it");
+    check((await db.dumpAll()).squad_comments.length >= 1, "comments are in the nightly backup");
+    check(!!wrenP, "(guest existed)");
+  }
+
+  console.log("\n=== live updates (v1.7) ===");
+  {
+    const http = require("http");
+    // a page listening: collects every note it hears
+    const listen = (topics, cookieTok, headers) => new Promise((resolve) => {
+      const got = [], L = { got, status: 0, id: null, close: null };
+      const req = http.get(`${B}/squadup/live?topics=${encodeURIComponent(topics)}`,
+        { headers: { ...(cookieTok ? { Cookie: "squadup=" + cookieTok } : {}), "Accept-Encoding": "gzip", ...(headers || {}) } }, res => {
+        L.status = res.statusCode; L.headers = res.headers;
+        if (res.statusCode !== 200) { res.resume(); return resolve(L); }
+        let buf = "";
+        res.setEncoding("utf8");
+        res.on("data", ch => {
+          buf += ch;
+          let i;
+          while ((i = buf.indexOf("\n\n")) >= 0) {
+            const block = buf.slice(0, i); buf = buf.slice(i + 2);
+            const ev = (/^event: (.*)$/m.exec(block) || [])[1], data = (/^data: (.*)$/m.exec(block) || [])[1];
+            if (!ev) continue;
+            const d = JSON.parse(data);
+            if (ev === "hello") { L.id = d.id; resolve(L); } else got.push({ ev, ...d });
+          }
+        });
+      });
+      L.close = () => req.destroy();
+    });
+    const wait = ms => new Promise(r => setTimeout(r, ms));
+    const postAs = async (path, body, liveId) => {
+      const r = await fetch(B + path, { method: "POST", headers: { "Content-Type": "application/json", ...(liveId ? { "X-Live-Id": liveId } : {}) },
+        body: JSON.stringify(body) });
+      return { status: r.status, body: await r.json().catch(() => ({})) };
+    };
+    const host = (await api("/squadup/api/signup", { name: "Harriet L", email: "harriet@x.test" })).body;
+    const pal = (await api("/squadup/api/signup", { name: "Pallas L", email: "pallas@x.test" })).body;
+    const lp = (await api("/squadup/api/activity", { token: host.token, title: "Live test", tag_name: "Lively", primary: "2031-09-05T19:00" })).body.id;
+    const lpO = await db.listOptions(lp);
+
+    check((await listen("a:" + lp)).status === 403, "only someone we know can listen");
+    check((await listen("nonsense!", host.token)).status === 400, "only real topics");
+    const hostL = await listen(`a:${lp},home`, host.token);
+    const palL = await listen(`a:${lp}`, pal.token);
+    const homeL = await listen("home", pal.token);
+    check(hostL.status === 200 && /event-stream/.test(hostL.headers["content-type"]) && !hostL.headers["content-encoding"],
+      "a page gets a live line (not compressed, so notes arrive right away)");
+
+    // Pallas answers: the host's page hears about it; Pallas's own page doesn't
+    await postAs("/squadup/api/rsvp", { token: pal.token, activity_id: lp, option_ids: [lpO[0].id] }, palL.id);
+    await wait(700);
+    check(hostL.got.some(e => e.ev === "change" && e.t === "a:" + lp && (e.w || []).includes("parts")), "an answer reaches others with the plan open");
+    check(!palL.got.some(e => e.ev === "change" && e.t === "a:" + lp), "but not the page that made it");
+    check(homeL.got.some(e => e.t === "home"), "home pages hear too, for their counts");
+
+    // a burst of taps is one note
+    hostL.got.length = 0;
+    for (let i = 0; i < 5; i++) await postAs("/squadup/api/rsvp", { token: pal.token, activity_id: lp, option_ids: i % 2 ? [] : [lpO[0].id] });
+    await wait(700);
+    check(hostL.got.filter(e => e.t === "a:" + lp).length <= 2, `five quick taps arrive as one or two notes (${hostL.got.filter(e => e.t === "a:" + lp).length})`);
+
+    // comments: a "comments" note, and the thread as each person sees it
+    hostL.got.length = 0;
+    await postAs("/squadup/api/comment", { token: pal.token, activity_id: lp, body: "Live hello" }, palL.id);
+    await wait(700);
+    check(hostL.got.some(e => e.t === "a:" + lp && (e.w || []).includes("comments") && !(e.w || []).includes("parts")), "a comment sends a comments note (not a full redraw)");
+    const cl = await postAs("/squadup/api/comment-list", { token: host.token, activity_id: lp });
+    check(cl.status === 200 && cl.body.count === 1 && cl.body.html.includes("Live hello") && cl.body.html.includes("data-cdel"),
+      "the page fetches the thread as the host sees it (they can delete it)");
+
+    // typing dots: straight to others, never saved, never to yourself
+    hostL.got.length = 0; palL.got.length = 0;
+    const ty = await postAs("/squadup/api/typing", { token: pal.token, activity_id: lp }, palL.id);
+    await wait(150);
+    check(ty.status === 200 && hostL.got.some(e => e.ev === "typing" && e.name === "Pallas" && e.on === true),
+      "typing shows up for others at once, with a first name");
+    check(!palL.got.some(e => e.ev === "typing"), "not on the typer's own page");
+    check((await postAs("/squadup/api/typing", { activity_id: lp })).status === 403, "typing needs someone we know");
+    hostL.got.length = 0;
+    await postAs("/squadup/api/comment", { token: pal.token, activity_id: lp, body: "Sent" }, palL.id);
+    await wait(150);
+    check(hostL.got.some(e => e.ev === "typing" && e.on === false), "posting the comment clears their dots");
+
+    // a deleted plan offers a reload; quiet things send nothing
+    await wait(600); hostL.got.length = 0;
+    await postAs("/squadup/api/tour-seen", { token: pal.token });
+    await wait(600);
+    check(!hostL.got.length, "changes nobody else can see send nothing");
+    await api("/squadup/api/cancel", { token: host.token, activity_id: lp, reason: "test" });
+    await wait(600);
+    check(palL.got.some(e => e.t === "a:" + lp && (e.w || []).includes("big")), "deleting the plan tells open pages to offer a reload");
+
+    // names change everywhere
+    palL.got.length = 0;
+    await postAs("/squadup/api/me", { token: host.token, name: "Harriet Lou", email: "harriet@x.test" });
+    await wait(600);
+    check(palL.got.some(e => e.t === "*"), "a name change reaches every open page");
+
+    // the page itself carries its topic, and the script
+    const pg = await (await fetch(`${B}/squadup/a/${lp}?t=${pal.token}`)).text();
+    check(pg.includes(`id="live" data-topics="a:${lp}"`), "a plan page says what to listen to");
+    check((await (await fetch(`${B}/squadup/p/${pal.token}`)).text()).includes('data-topics="home"'), "and the home page");
+    const js = await (await fetch(`${B}/squadup/app.js`)).text();
+    check(js.includes("new EventSource") && js.includes("liveSwap"), "the shared script has the live client");
+
+    const n = live.size();
+    [hostL, palL, homeL].forEach(L => L.close());
+    await wait(200);
+    check(live.size() === n - 3, "closed pages are let go");
+  }
+
+  console.log("\n=== message the group (v1.8) ===");
+  {
+    const NN = require("./lib/notify.js");
+    const smsOut = [], mailOut = [];
+    const realSms = notifier.backends.sms, realMail = notifier.backends.email;
+    notifier.backends.sms = { kind: "sms", async send(p, m) { smsOut.push({ to: p, text: NN.renderSms(m, NN.link(p)), m }); } };
+    notifier.backends.email = { kind: "email", async send(p, m) { mailOut.push({ to: p, ...m }); } };
+    const realSendM = notifier.send;
+    notifier.send = async (p, m, ch) => (ch === "sms" || (!ch && notifier.channelFor(p) === "sms") ? notifier.backends.sms : notifier.backends.email).send(p, m);
+    const smsIn = async (from, text) => {
+      const params = { From: from, Body: text, To: "+12395550000", MessageSid: "SM" + Math.random() };
+      const r = await fetch(B + "/squadup/sms/inbound", { method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded",
+          "X-Twilio-Signature": NN.twilioSignature("test-twilio-token", process.env.SQUAD_BASE_URL + "/sms/inbound", params) },
+        body: new URLSearchParams(params).toString() });
+      return r.text();
+    };
+    const host = (await api("/squadup/api/signup", { name: "Marisol G", email: "marisol@x.test" })).body;
+    const texter = (await api("/squadup/api/signup", { name: "Teodoro G", email: "teo@x.test", phone: "(239) 555-0712" })).body;
+    const mailer = (await api("/squadup/api/signup", { name: "Esperanza G", email: "esperanza@x.test" })).body;
+    const nope = (await api("/squadup/api/signup", { name: "Norberto G", email: "norberto@x.test" })).body;
+    const fence = (await api("/squadup/api/signup", { name: "Felipa G", email: "felipa@x.test" })).body;
+    const pl = (await api("/squadup/api/activity", { token: host.token, title: "Beach bonfire", tag_name: "Bonfires", primary: "2031-06-20T19:00" })).body.id;
+    const opt = (await db.listOptions(pl))[0].id;
+    for (const t of [texter.token, mailer.token]) await api("/squadup/api/rsvp", { token: t, activity_id: pl, option_ids: [opt] });
+    await api("/squadup/api/rsvp", { token: nope.token, activity_id: pl, cant: true });
+    // a guest who's in sees it on the page but can't be messaged
+    const gst = await fetch(B + "/squadup/api/guest", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: "Guadalupe G" }) });
+    const gck = (gst.headers.get("set-cookie") || "").split(";")[0];
+    await fetch(B + "/squadup/api/rsvp", { method: "POST", headers: { "Content-Type": "application/json", Cookie: gck }, body: JSON.stringify({ activity_id: pl, option_ids: [opt] }) });
+
+    smsOut.length = 0; mailOut.length = 0;   // sign-up confirmations aren't what we're checking
+    const hostPage = await (await fetch(`${B}/squadup/a/${pl}?t=${host.token}`)).text();
+    check(hostPage.includes('id="msgopen"') && hostPage.includes("Message the group"), "the organizer has Message the group on their plan");
+    check(!(await (await fetch(`${B}/squadup/a/${pl}?t=${texter.token}`)).text()).includes('id="msgopen"'), "nobody else does");
+
+    const prev = await api("/squadup/api/plan-message", { token: host.token, activity_id: pl, body: "x", preview: true });
+    check(prev.status === 200 && prev.body.total === 3 && prev.body.texts === 1 && prev.body.emails === 1 && prev.body.none === 1 && prev.body.left === 3,
+      `the preview counts who's in and how they'll hear (${JSON.stringify(prev.body)})`);
+    check(smsOut.length === 0 && mailOut.length === 0, "a preview sends nothing");
+    check((await api("/squadup/api/plan-message", { token: texter.token, activity_id: pl, body: "hi" })).status === 403, "only the organizer can send");
+    check((await api("/squadup/api/plan-message", { token: host.token, activity_id: pl, body: "x".repeat(301) })).status === 400, "300 characters at most");
+    check((await api("/squadup/api/plan-message", { token: host.token, activity_id: pl, body: "Map: https://bit.ly/abc" })).status === 400, "short links are turned away");
+    check((await api("/squadup/api/plan-message", { token: host.token, activity_id: pl, body: "  " })).status === 400, "an empty message is turned away");
+
+    const sent = await api("/squadup/api/plan-message", { token: host.token, activity_id: pl, body: "Park in the back lot, front is closed. https://example.com/map" });
+    check(sent.status === 200 && sent.body.sent === 2 && sent.body.left === 2, "sending reaches the two who can get messages");
+    const t = smsOut.find(x => x.text.includes("Park in the back lot"));
+    check(t && t.text.startsWith("Squad Up: Marisol about Beach bonfire: Park in the back lot") && /\/squadup\/a\//.test(t.text),
+      "the text says it's Squad Up, who it's from, which plan, then the note and a link");
+    check(!/[\u2013\u2014]/.test(t.text.split(": ").slice(0, 2).join("")), "(plain characters up front, so the text stays cheap)");
+    const m = mailOut.find(x => x.to.email === "esperanza@x.test");
+    check(m && /Beach bonfire: a note from Marisol/.test(m.subject) && m.body.includes("Park in the back lot"), "people without texts get it by email");
+    check(!smsOut.concat(mailOut).some(x => x.to.email === "norberto@x.test" || x.to.email === "felipa@x.test" || x.to.email === "marisol@x.test"),
+      "nobody who's out, hasn't answered, or is the organizer gets it");
+    const pg = await (await fetch(`${B}/squadup/a/${pl}`, { headers: { Cookie: gck } })).text();
+    check(pg.includes("Update from Marisol") && pg.includes("Park in the back lot") && pg.includes('href="https://example.com/map"'),
+      "it shows on the plan page for everyone, guests too, with the link tappable");
+
+    // a texted reply can't reach the organizer, and doesn't change an answer
+    smsOut.length = 0;
+    const reply = await smsIn("+12395550712", "No problem!");
+    check(/don't reach Marisol/.test(reply) && /\/squadup\/a\//.test(reply), "a texted reply gets 'replies here don't reach Marisol', with the plan link");
+    await smsIn("+12395550712", "no");
+    const teoP = await db.getPersonByToken(texter.token);
+    check((await db.listResponses(pl)).find(r => r.person_id === teoP.id).can_make_it !== false,
+      "replying 'no' to a group message doesn't mark them out");
+
+    // three a day
+    await api("/squadup/api/plan-message", { token: host.token, activity_id: pl, body: "Two" });
+    await api("/squadup/api/plan-message", { token: host.token, activity_id: pl, body: "Three" });
+    const fourth = await api("/squadup/api/plan-message", { token: host.token, activity_id: pl, body: "Four" });
+    check(fourth.status === 429 && /3 messages/.test(fourth.body.error), "a fourth message the same day is held off");
+    const pg2 = await (await fetch(`${B}/squadup/a/${pl}?t=${host.token}`)).text();
+    check(pg2.indexOf("Three") < pg2.indexOf("2 earlier updates") && pg2.includes("Two"), "newest on top, earlier ones folded");
+
+    // over or deleted: no more messages
+    await api("/squadup/api/cancel", { token: host.token, activity_id: pl, reason: "" , notify: false });
+    check((await api("/squadup/api/plan-message", { token: host.token, activity_id: pl, body: "x", preview: true })).status === 400, "a deleted plan can't be messaged");
+    check((await db.dumpAll()).squad_updates.length === 3, "updates are in the nightly backup");
+
+    notifier.backends.sms = realSms; notifier.backends.email = realMail; notifier.send = realSendM;
+  }
+
+  console.log("\n=== token quality ===");
+  const t1 = C.newToken(), t2 = C.newToken();
+  check(t1 !== t2 && t1.length >= 30, "tokens are long and unique");
+
+  console.log("\n" + (fail.length
+    ? "FAILURES:\n - " + fail.join("\n - ") : "ALL SQUAD UP CHECKS PASSED"));
+  server.close();
+  process.exit(fail.length ? 1 : 0);
+})().catch(e => { console.error("harness crashed:", e); server.close(); process.exit(1); });
