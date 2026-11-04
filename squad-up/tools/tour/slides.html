@@ -1,0 +1,304 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@500;700;800&display=block" rel="stylesheet">
+<!-- The tour video, version 2: scenario slides built from the app's own
+     styles (render_slides.py injects lib/theme.js), plus two real screens.
+     720x1280; render(t) draws one frame. -->
+<style id="stage">
+html,body{width:720px;height:1280px;overflow:hidden;margin:0;padding:0!important}
+body{position:relative;background:repeating-linear-gradient(180deg,#F6F8FA 0 3px,#EEF2F6 3px 6px)!important}
+#glow{position:absolute;left:50%;top:640px;width:1000px;height:1000px;margin:-500px 0 0 -500px;border-radius:50%;
+  background:radial-gradient(circle,hsla(var(--gh),85%,62%,.26) 0,hsla(var(--gh),85%,62%,0) 62%)}
+.scene{position:absolute;inset:0;opacity:0}
+.q{position:absolute;left:44px;right:44px;top:150px;text-align:center;font-size:50px;line-height:1.1;font-weight:800;
+  letter-spacing:-.015em;color:#3B4553}
+.pay{position:absolute;left:40px;right:40px;top:1010px;text-align:center}
+.pay b{display:block;font-size:37px;line-height:1.25;font-weight:800;color:#3B4553}
+.pay span{display:block;font-size:30px;line-height:1.3;font-weight:500;color:#7A8596;margin-top:8px}
+.zoom{position:absolute;left:50%;width:358px;margin-left:-179px;transform-origin:50% 0}
+.zoom .bubble{margin:0 0 14px}
+.zoom .people{margin:4px 0 10px}
+.logo i{width:var(--s,18px);height:var(--s,18px);margin-left:calc(var(--s,18px) * -.33);
+  box-shadow:0 1px 2px rgba(0,0,0,.18),0 0 0 calc(var(--s,18px) * .11) #fff}
+.logo i:first-child{margin-left:0}
+.brandbig{position:absolute;left:0;right:0;top:420px;text-align:center}
+.brandbig .logo{--s:62px;justify-content:center}
+.brandbig h2{font-size:92px;font-weight:800;letter-spacing:-.02em;line-height:1;margin:44px 0 0;color:#3B4553}
+.brandbig .with{font-size:36px;font-weight:700;color:#8792A2;margin-top:12px}
+.brandbig p{font-size:32px;font-weight:700;color:#5B6676;margin:70px 0 0;line-height:1.35}
+.phone{position:absolute;left:125px;width:470px;border-radius:40px;background:#fff;overflow:hidden;
+  box-shadow:0 0 0 8px #fff,0 0 0 9px #E1E7EE,0 30px 70px -20px rgba(40,60,90,.45)}
+.phone img{position:absolute;left:0;top:0;width:470px;display:block}
+#note{position:absolute;left:60px;right:60px;top:330px;border-radius:26px;padding:18px 20px 18px 18px;
+  background:rgba(250,251,253,.98);box-shadow:0 18px 44px -12px rgba(30,45,70,.5),0 0 0 1px rgba(0,0,0,.04);
+  display:flex;gap:16px;align-items:flex-start;opacity:0;z-index:5}
+#note .ic{flex:none;width:58px;height:58px;border-radius:14px;background:linear-gradient(180deg,#fff,#EEF2F6);
+  box-shadow:inset 0 0 0 1px #E1E7EE;display:flex;align-items:center;justify-content:center}
+#note .meta{display:flex;justify-content:space-between;font-size:18px;color:#8792A2;font-weight:700;letter-spacing:.03em}
+#note .msg{font-size:22px;line-height:1.32;font-weight:500;color:#3B4553;margin-top:4px}
+/* the spotlight: a hole in a dark veil, around whatever is about to be tapped */
+#spot{position:absolute;z-index:20;pointer-events:none;opacity:0;
+  box-shadow:0 0 0 4px rgba(255,255,255,.95),0 0 0 3000px rgba(24,34,48,.6)}
+#ripple{position:absolute;z-index:21;border-radius:50%;pointer-events:none;opacity:0;
+  border:4px solid rgba(255,255,255,.95);box-shadow:0 0 18px rgba(255,255,255,.6)}
+.pop{display:inline-block}
+</style></head>
+<body>
+<div id="glow"></div>
+
+<!-- 1. open -->
+<div class="scene" id="s1">
+  <div class="brandbig">
+    <span class="logo" id="s1logo"><i style="--h:4"></i><i style="--h:46"></i><i style="--h:128"></i><i style="--h:192"></i><i style="--h:296"></i></span>
+    <h2 id="s1t">Squad Up</h2><div class="with" id="s1w">with Gin</div>
+    <p id="s1p">Plans with your people,<br>made easy.</p>
+  </div>
+</div>
+
+<!-- 2. interested -->
+<div class="scene" id="s2">
+  <div class="q">Want to know what<br>your friends are up to?</div>
+  <div class="zoom" id="s2z" style="top:420px">
+    <div class="bubble act" style="--h:140;--l:40%">
+      <div class="acthead"><h3>Pickleball</h3>
+        <button type="button" class="bell on" id="s2bell" style="opacity:0"><svg viewBox="0 0 24 24" width="20" height="20"><path d="M12 3a5 5 0 0 0-5 5v3.2c0 .9-.3 1.8-.9 2.5L5 15.2V17h14v-1.8l-1.1-1.5a4 4 0 0 1-.9-2.5V8a5 5 0 0 0-5-5Zm-2 15.5a2 2 0 0 0 4 0" fill="currentColor"/></svg></button></div>
+      <p class="actnote">Lakes Park courts, all levels</p>
+      <details class="actwho" open><summary><span id="s2n">6</span> interested</summary>
+        <div class="people"><span class="person">Gin</span><span class="person">Sebastian</span><span class="person">Marcus</span><span class="person">Priya</span><span class="person">Leo</span><span class="person">Tess</span><span class="person pop" id="s2you" style="opacity:0">You</span></div></details>
+      <div class="row tight"><button type="button" class="sm" id="s2btn">I'm interested</button>
+        <a class="pill sm">Schedule it</a></div>
+    </div>
+  </div>
+  <div class="pay" id="s2p"><b>Mark what you're into.</b><span>When someone plans it, you'll hear about it.</span></div>
+</div>
+
+<!-- 3. plan something -->
+<div class="scene" id="s3">
+  <div class="q">Want to plan<br>something?</div>
+  <div class="zoom" id="s3z" style="top:430px">
+    <div id="s3go" style="text-align:center;padding-top:40px"><a class="pill go" id="s3btn">+ New plan</a></div>
+    <div id="s3c1" style="position:absolute;left:0;right:0;top:0;opacity:0"><div class="bubble row-card choice">
+      <div class="orb"><b>✓</b><span>date</span></div>
+      <div class="body"><h3>I know when</h3><p class="muted small" style="margin:4px 0 0">Pick the day and time, plus a backup.</p></div></div></div>
+    <div id="s3c2" style="position:absolute;left:0;right:0;top:118px;opacity:0"><div class="bubble row-card choice" style="--h:276;--l:52%">
+      <div class="orb hollow"><b>?</b><span>dates</span></div>
+      <div class="body"><h3>Find a time</h3><p class="muted small" style="margin:4px 0 0">Offer some dates. Everyone taps what works.</p></div></div></div>
+  </div>
+  <div class="pay" id="s3p"><b>Pick a time, or let the squad decide.</b><span id="s3p2">Everyone interested gets a heads-up.</span></div>
+</div>
+
+<!-- 4. invited: tap every time that works -->
+<div class="scene" id="s5">
+  <div class="q">Got an invite link?</div>
+  <div class="zoom" id="s5z" style="top:245px">
+    <h3 style="margin:0 0 10px 4px">Dinner at Bella's</h3>
+    <div class="bubble opt" style="--h:4;--l:50%;margin:0 0 12px">
+      <div class="top"><div><div class="when">Friday, 7pm</div></div><span class="count"><span id="s5n1">6</span> in</span></div>
+      <div class="track"><div class="bar" id="s5bar1" style="width:60%"></div></div>
+      <div class="row tight"><button class="sm" id="s5btn1">This works</button></div>
+    </div>
+    <div class="bubble opt" style="--h:4;--l:50%;margin:0 0 12px">
+      <div class="top"><div><div class="when">Saturday, 7pm</div></div><span class="count"><span id="s5n2">4</span> in</span></div>
+      <div class="track"><div class="bar" id="s5bar2" style="width:40%"></div></div>
+      <div class="row tight"><button class="sm" id="s5btn2">This works</button></div>
+    </div>
+    <div class="bubble opt" style="--h:4;--l:50%;margin:0 0 12px">
+      <div class="top"><div><div class="when">Sunday, 6pm</div></div><span class="count"><span id="s5n3">2</span> in</span></div>
+      <div class="track"><div class="bar" id="s5bar3" style="width:20%"></div></div>
+      <div class="row tight"><button class="sm" id="s5btn3">This works</button></div>
+    </div>
+  </div>
+  <div id="note" style="top:880px"><div class="ic"><span class="logo" style="--s:14px"><i style="--h:4"></i><i style="--h:46"></i><i style="--h:128"></i><i style="--h:192"></i><i style="--h:296"></i></span></div>
+    <div style="flex:1"><div class="meta"><span>SQUAD UP</span><span>now</span></div>
+      <div class="msg">Reminder: Dinner at Bella's is tomorrow, 7pm. You said you're in.</div></div></div>
+  <div class="pay" id="s5p" style="top:1025px"><b>Tap every time that<br>works for you.</b><span>We'll remind you the day before.</span></div>
+</div>
+
+<!-- 5b. add to calendar -->
+<div class="scene" id="scal">
+  <div class="q">Don't want to forget?</div>
+  <div class="zoom" id="calz" style="top:420px">
+    <div class="bubble" style="--h:4;--l:50%">
+      <h3>Dinner at Bella's</h3>
+      <p class="muted small" style="margin:4px 0 0">Friday, 7pm · Bella's Trattoria</p>
+      <div class="row tight calrow"><button type="button" class="sm" id="calbtn">Add to calendar</button></div>
+      <div class="row tight" id="calmenu" style="opacity:0;margin-top:8px"><a class="pill sm quiet" id="calapple">Apple / Outlook</a><a class="pill sm quiet">Google</a></div>
+    </div>
+    <div id="calev" style="opacity:0;margin-top:20px;background:#fff;border-radius:18px;overflow:hidden;
+      box-shadow:0 12px 30px -14px rgba(30,45,70,.45),0 0 0 1px #E3E8EE">
+      <div style="background:#F05A4E;color:#fff;font-weight:800;font-size:13px;letter-spacing:.08em;padding:7px 14px">FRIDAY</div>
+      <div style="display:flex;gap:12px;align-items:stretch;padding:12px 14px">
+        <div style="width:4px;border-radius:2px;background:#F05A4E"></div>
+        <div><div style="font-weight:800;color:#3B4553">Dinner at Bella's</div>
+          <div style="font-size:14px;color:#8792A2">7:00 – 9:00 PM · Bella's Trattoria</div></div></div>
+    </div>
+  </div>
+  <div class="pay" id="calp"><b>Add it to your calendar.</b><span>Apple, Outlook or Google.</span></div>
+</div>
+
+<!-- 6. too many messages -->
+<div class="scene" id="s6">
+  <div class="q">Too many messages?</div>
+  <div class="zoom" id="s6z" style="top:440px">
+    <div class="bubble act mine" style="--h:4;--l:50%" id="s6card">
+      <div class="acthead"><h3>Dinner</h3>
+        <button type="button" class="bell on" id="s6bell"></button></div>
+      <details class="actwho"><summary>7 interested</summary></details>
+      <div class="row tight"><button type="button" class="sm on">Interested ✓</button><a class="pill sm">Schedule it</a></div>
+      <p class="bellnote" id="s6note" style="opacity:0">Messages off. You're still on the list.</p>
+    </div>
+  </div>
+  <div class="pay" id="s6p"><b>Tap the bell. Messages stop,</b><span>and you stay on the list.</span></div>
+</div>
+
+<!-- 7. close -->
+<div class="scene" id="s7">
+  <div id="s7end" style="position:absolute;inset:0">
+    <div class="brandbig">
+      <span class="logo" id="s7logo"><i style="--h:4"></i><i style="--h:46"></i><i style="--h:128"></i><i style="--h:192"></i><i style="--h:296"></i></span>
+      <h2 id="s7t">Squad Up</h2><div class="with" id="s7w">with Gin</div>
+      <p id="s7p">Less group-chat chaos.<br>More plans.</p>
+    </div>
+  </div>
+</div>
+
+<div id="spot"></div><div id="ripple"></div>
+<script>
+const MAN = window.MAN, BASE = window.SHOTS;
+const BELL_ON = `<svg viewBox="0 0 24 24" width="20" height="20"><path d="M12 3a5 5 0 0 0-5 5v3.2c0 .9-.3 1.8-.9 2.5L5 15.2V17h14v-1.8l-1.1-1.5a4 4 0 0 1-.9-2.5V8a5 5 0 0 0-5-5Zm-2 15.5a2 2 0 0 0 4 0" fill="currentColor"/></svg>`;
+const BELL_OFF = `<svg viewBox="0 0 24 24" width="20" height="20"><path d="M12 3a5 5 0 0 0-5 5v3.2c0 .9-.3 1.8-.9 2.5L5 15.2V17h14v-1.8l-1.1-1.5a4 4 0 0 1-.9-2.5V8a5 5 0 0 0-5-5Zm-2 15.5a2 2 0 0 0 4 0" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M4 4l16 16" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>`;
+const $ = id => document.getElementById(id);
+const clamp = x => Math.max(0, Math.min(1, x));
+const prog = (t, a, b) => clamp((t - a) / (b - a));
+const ease = x => { x = clamp(x); return x < .5 ? 4*x*x*x : 1 - Math.pow(-2*x + 2, 3) / 2; };
+const out = x => { x = clamp(x); return 1 - Math.pow(1 - x, 3); };
+const back = x => { x = clamp(x); const c = 1.70158, c3 = c + 1; return 1 + c3 * Math.pow(x - 1, 3) + c * Math.pow(x - 1, 2); };
+function rise(el, k, d) { el.style.opacity = out(k); el.style.transform = `translateY(${(1 - out(k)) * (d || 24)}px)`; }
+const ZOOM = 1.7, PSC = 470 / MAN.viewport[0];
+
+const SCENES = [
+  { id: "s1", len: 2.8, hue: 198 }, { id: "s2", len: 6.0, hue: 140 }, { id: "s3", len: 6.0, hue: 198 },
+  { id: "s5", len: 7.0, hue: 4 }, { id: "scal", len: 6.0, hue: 14 },
+  { id: "s6", len: 5.0, hue: 350 }, { id: "s7", len: 3.0, hue: 198 }];
+let acc = 0; SCENES.forEach(s => { s.t0 = acc; acc += s.len; });
+window.DURATION = acc;
+const XF = .35;   // crossfade between scenes
+
+// one tap: veil in, press, change, veil out. rect() is where the hole goes.
+function tap(lt, at, rect, el) {
+  const veil = Math.min(ease(prog(lt, at - .85, at - .45)), 1 - ease(prog(lt, at + .5, at + .85)));
+  const press = lt >= at && lt < at + .22 ? Math.sin(prog(lt, at, at + .22) * Math.PI) : 0;
+  if (el) { el.style.transform = `scale(${1 - .07 * press})`; el.style.filter = press ? `brightness(${1 - .12 * press})` : ""; }
+  if (veil <= 0) return 0;
+  const r = rect(), pad = 14, sp = $("spot");
+  sp.style.opacity = veil;
+  sp.style.left = (r.left - pad) + "px"; sp.style.top = (r.top - pad) + "px";
+  sp.style.width = (r.width + pad * 2) + "px"; sp.style.height = (r.height + pad * 2) + "px";
+  sp.style.borderRadius = (Math.min(r.width, r.height) / 2 + pad) + "px";
+  const u = prog(lt, at + .05, at + .6), rp = $("ripple");
+  if (u > 0 && u < 1) {
+    const d = Math.max(r.width, r.height) * (0.4 + 1.1 * out(u));
+    rp.style.opacity = (1 - u) * veil; rp.style.width = rp.style.height = d + "px";
+    rp.style.left = (r.left + r.width / 2 - d / 2) + "px"; rp.style.top = (r.top + r.height / 2 - d / 2) + "px";
+  }
+  return veil;
+}
+const elRect = id => () => $(id).getBoundingClientRect();
+function phoneRect(ph, shot, key, scroll) {
+  return () => { const p = $(ph).getBoundingClientRect(), b = MAN.shots[shot].boxes[key];
+    return { left: p.left + b[0] * PSC, top: p.top + (b[1] - scroll) * PSC, width: b[2] * PSC, height: b[3] * PSC }; };
+}
+function scrollFor(shot, key, frac, vh) {
+  const s = MAN.shots[shot], b = s.boxes[key];
+  return Math.max(0, Math.min(s.h - vh, b[1] + b[3] / 2 - vh * frac));
+}
+
+const DRAW = {
+  s1(t) {
+    document.querySelectorAll("#s1logo i").forEach((d, i) => {
+      const k = prog(t, .05 + i * .09, .4 + i * .09);
+      d.style.transform = `scale(${back(k)})`; d.style.opacity = clamp(k * 3);
+    });
+    rise($("s1t"), prog(t, .5, .95)); rise($("s1w"), prog(t, .65, 1.1)); rise($("s1p"), prog(t, .95, 1.45));
+  },
+  s2(t) {
+    rise($("s2z"), prog(t, 0, .45), 30); $("s2z").style.transform += ` scale(${ZOOM})`;
+    const on = t >= 2.0;
+    const b = $("s2btn"); b.classList.toggle("on", on); b.textContent = on ? "Interested ✓" : "I'm interested";
+    $("s2n").textContent = on ? 7 : 6;
+    $("s2you").style.opacity = out(prog(t, 2.0, 2.3)); $("s2you").style.transform = `scale(${on ? back(prog(t, 2.0, 2.35)) : 0})`;
+    $("s2bell").style.opacity = out(prog(t, 2.05, 2.35)); $("s2bell").style.transform = `scale(${back(prog(t, 2.05, 2.4))})`;
+    tap(t, 1.8, elRect("s2btn"), b);
+    rise($("s2p"), prog(t, 2.6, 3.0));
+  },
+  s3(t) {
+    rise($("s3z"), prog(t, 0, .45), 30); $("s3z").style.transform += ` scale(${ZOOM})`;
+    const gone = prog(t, 1.75, 2.0);
+    $("s3go").style.opacity = 1 - gone; $("s3go").style.transform = `scale(${1 - .25 * ease(gone)})`;
+    tap(t, 1.5, elRect("s3btn"), $("s3btn"));
+    rise($("s3c1"), prog(t, 1.85, 2.25), 40); rise($("s3c2"), prog(t, 2.0, 2.4), 40);
+    rise($("s3p"), prog(t, 2.55, 2.95));
+    $("s3p2").style.opacity = out(prog(t, 2.95, 3.35));
+  },
+  s5(t) {
+    rise($("s5z"), prog(t, 0, .45), 30); $("s5z").style.transform += ` scale(1.4)`;
+    [[1, 1.6, 6, 60], [2, 3.0, 4, 40]].forEach(([i, at, n, pct]) => {
+      const on = t >= at + .2, b = $("s5btn" + i);
+      b.classList.toggle("on", on); b.textContent = on ? "Works for me ✓" : "This works";
+      $("s5n" + i).textContent = on ? n + 1 : n;
+      $("s5bar" + i).style.width = (pct + 10 * out(prog(t, at + .2, at + .55))) + "%";
+      tap(t, at, elRect("s5btn" + i), b);
+    });
+    rise($("s5p"), prog(t, 3.7, 4.1));
+    const n = $("note"), k = out(prog(t, 4.2, 4.65));
+    n.style.opacity = k; n.style.transform = `translateY(${(1 - k) * 40}px)`;
+  },
+  s6(t) {
+    rise($("s6z"), prog(t, 0, .45), 30); $("s6z").style.transform += ` scale(${ZOOM})`;
+    const off = t >= 1.75, bell = $("s6bell");
+    bell.classList.toggle("on", !off); bell.innerHTML = off ? BELL_OFF : BELL_ON;
+    $("s6note").style.opacity = out(prog(t, 1.8, 2.15));
+    tap(t, 1.55, elRect("s6bell"), bell);
+    rise($("s6p"), prog(t, 2.3, 2.7));
+  },
+  scal(t) {
+    rise($("calz"), prog(t, 0, .45), 30); $("calz").style.transform += ` scale(${ZOOM})`;
+    tap(t, 1.3, elRect("calbtn"), $("calbtn"));
+    rise($("calmenu"), prog(t, 1.5, 1.85), 14);
+    tap(t, 2.55, elRect("calapple"), $("calapple"));
+    rise($("calev"), prog(t, 2.8, 3.25), 40);
+    rise($("calp"), prog(t, 3.0, 3.4));
+  },
+  s7(t) {
+    // the same opening as the start, so the loop comes round smoothly
+    document.querySelectorAll("#s7logo i").forEach((d, i) => {
+      const k = prog(t, .05 + i * .07, .35 + i * .07);
+      d.style.transform = `scale(${back(k)})`; d.style.opacity = clamp(k * 3);
+    });
+    rise($("s7t"), prog(t, .35, .75)); rise($("s7w"), prog(t, .5, .9)); rise($("s7p"), prog(t, .75, 1.2));
+  }
+};
+
+window.render = function (t) {
+  $("spot").style.opacity = 0; $("ripple").style.opacity = 0;
+  let cur = SCENES.findIndex(s => t < s.t0 + s.len); if (cur < 0) cur = SCENES.length - 1;
+  SCENES.forEach((s, i) => {
+    const el = $(s.id), lt = t - s.t0;
+    let o = 0;
+    // the old scene clears before the new one comes in, so two never overlap
+    if (i === cur) o = i === 0 ? 1 : ease(prog(lt, XF * .45, XF));
+    else if (i === cur - 1 && t - SCENES[cur].t0 < XF) o = 1 - ease(prog(t - SCENES[cur].t0, 0, XF * .5));
+    el.style.opacity = o; el.style.display = o > 0 ? "block" : "none";
+    if (o > 0) DRAW[s.id](Math.min(lt, s.len));
+  });
+  // the glow drifts to each scene's color
+  const sc = SCENES[cur], prev = SCENES[Math.max(0, cur - 1)];
+  let dh = sc.hue - prev.hue; if (dh > 180) dh -= 360; if (dh < -180) dh += 360;
+  $("glow").style.setProperty("--gh", prev.hue + dh * ease(prog(t - sc.t0, 0, .7)));
+  // keep the spotlight on top of the scene that owns it
+  return true;
+};
+window.ready = Promise.all([document.fonts.ready, ...Object.values(MAN.shots).map(s => new Promise(r => {
+  const im = new Image(); im.onload = im.onerror = r; im.src = BASE + s.file; }))]);
+</script>
+</body></html>
