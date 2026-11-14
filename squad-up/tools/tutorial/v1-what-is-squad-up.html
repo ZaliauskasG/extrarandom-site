@@ -1,0 +1,89 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@500;700;800&display=block" rel="stylesheet">
+<link rel="stylesheet" href="stage.css">
+<!-- Tutorial video 1: What Is Squad Up?
+     Make a plan -> friends get a text -> everyone taps in. About 12.5 seconds. -->
+<style>
+#note{left:40px;right:40px}
+#opt .who{min-height:21px}
+.nm{display:inline-block}
+</style></head>
+<body>
+<div id="glow"></div>
+<div class="qbrand"><span class="logo" id="logo"><i style="--h:4"></i><i style="--h:46"></i><i style="--h:128"></i><i style="--h:192"></i><i style="--h:296"></i></span>Squad Up</div>
+<div class="q">What Is Squad Up?</div>
+
+<!-- 1. the plan -->
+<div class="zoom" id="card">
+  <div class="bubble row-card" style="--h:4;--l:50%">
+    <div class="orb"><b>21</b><span>Sat</span></div>
+    <div class="body"><h3>Saturday Dinner</h3>
+      <div class="meta"><span>Nov 21, 7pm</span><span class="tag">Dinner</span></div></div>
+  </div>
+</div>
+
+<!-- 2. the text it sends -->
+<div class="note" id="note"><div class="ic"><span class="logo" style="--s:15px"><i style="--h:4"></i><i style="--h:46"></i><i style="--h:128"></i><i style="--h:192"></i><i style="--h:296"></i></span></div>
+  <div style="flex:1"><div class="meta"><span>SQUAD UP</span><span>now</span></div>
+    <div class="msg">John invited you to Saturday Dinner: Sat Nov 21, 7pm. Reply YES or NO.</div></div></div>
+
+<!-- 3. everyone answers -->
+<div class="zoom" id="opt">
+  <h3 style="margin:0 0 10px 4px">Saturday Dinner</h3>
+  <div class="bubble opt plan" style="--h:4;--l:50%">
+    <div class="top">
+      <div><div class="when">Sat Nov 21, 7pm</div>
+        <div class="meta"><span class="tag solid">The plan</span></div></div>
+      <span class="count"><span id="n">1</span> in</span>
+    </div>
+    <div class="who" id="who"><span class="nm">John</span></div>
+    <div class="track"><div class="bar" id="bar" style="width:20%"></div></div>
+    <div class="row tight"><button class="sm" id="works">This works</button></div>
+  </div>
+</div>
+
+<div class="pay" id="c1"><b>Make a plan.</b></div>
+<div class="pay" id="c2"><b>Friends automatically get<br>a text or email.</b></div>
+<div class="pay" id="c3"><b>Everyone taps in or out.</b><span>No app to download,<br>no account to make.</span></div>
+
+<div id="spot"></div><div id="ripple"></div>
+<script src="stage.js"></script>
+<script>
+window.DURATION = 12.5 + END_FADE;
+window.POSTER = 12.0;
+const Z = 1.8;
+const NAMES = [["Sebastian", 8.1], ["Danielle", 8.6], ["Marcus", 9.1], ["You", 10.0]];
+function draw(t) {
+  dots("#logo", t, -1);   // already there on the first frame, so it loops cleanly
+  $("glow").style.setProperty("--gh", 4);
+
+  // 1. the plan card (0.2 - 3.2)
+  const c = $("card"), ck = shown(t, .15, 3.2);
+  c.style.opacity = ck;
+  c.style.transform = `translateY(${(1 - out(prog(t, .15, .55))) * 30 - 40 * ease(prog(t, 2.85, 3.2))}px) ${CENTER(Z)}`;
+  caption("c1", t, .5, 3.2);
+
+  // 2. the text lands (3.4 - 7.3)
+  const nt = $("note"), nk = out(prog(t, 3.4, 3.8)), nx = ease(prog(t, 6.95, 7.3));
+  nt.style.opacity = nk * (1 - nx);
+  nt.style.transform = `translateY(${(1 - nk) * -60 - nx * 40}px) ${CENTER(1.04 + .02 * Math.sin(prog(t, 3.7, 4.1) * Math.PI))}`;
+  caption("c2", t, 3.7, 7.3);
+
+  // 3. everyone taps in (7.5 - 12.5)
+  rise($("opt"), prog(t, 7.45, 7.9), 30, CENTER(Z));
+  let n = 1, names = ["John"];
+  NAMES.forEach(([nm, at]) => { if (t >= at) { n++; names.push(nm); } });
+  $("n").textContent = n;
+  $("who").innerHTML = names.map((nm, i) => {
+    const at = i ? NAMES[i - 1][1] : -1, k = prog(t, at, at + .3);
+    return `<span class="nm" style="transform:scale(${i ? back(k) : 1});opacity:${i ? clamp(k * 2) : 1}">${nm}</span>`;
+  }).join(", ");
+  $("bar").style.width = (20 + 15 * (n - 1)) + "%";
+  const on = t >= 10.0, b = $("works");
+  b.classList.toggle("on", on); b.textContent = on ? "Works for me ✓" : "This works";
+  tap(t, 9.9, b);
+  caption("c3", t, 7.8);
+}
+</script>
+</body></html>

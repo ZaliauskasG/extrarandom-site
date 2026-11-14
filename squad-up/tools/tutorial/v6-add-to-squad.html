@@ -1,0 +1,133 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@500;700;800&display=block" rel="stylesheet">
+<link rel="stylesheet" href="stage.css">
+<!-- Tutorial video 6: How Do I Add People to My Squad?
+     Tap your circle (top right) -> share your squad link -> + on People you've met -> tap a name on a plan. -->
+<style>
+.zoom{width:400px;margin-left:-200px}
+.zoom h1{font-size:28px;margin:0 0 6px 4px}
+.minibar{display:flex;align-items:center;justify-content:space-between;background:#fff;border-radius:18px;
+  padding:8px 10px 8px 14px;margin:0 0 16px;box-shadow:0 6px 16px -10px rgba(30,45,70,.35)}
+.minibar .brand{display:inline-flex;align-items:center;gap:8px;font-weight:800;font-size:17px;color:#3B4553}
+.minibar .avatar{width:34px;height:34px;font-size:15px}
+.zoom h2{font-size:22px;margin:16px 0 8px 4px}
+.zoom .sub{margin:0 0 12px 4px}
+.zoom .bubble{margin:0}
+.chat{position:absolute;left:56px;right:56px;top:738px;opacity:0;font-size:27px;line-height:1.3;text-align:center}
+.chat .bub{display:inline-block;max-width:540px;text-align:left;background:#2F86F6;color:#fff;border-radius:26px 26px 8px 26px;padding:14px 20px}
+.chat u{display:block;text-decoration:underline;text-decoration-thickness:2px;margin-top:4px;font-size:24px}
+#plan .who{font-size:15px}
+#plan .pmenu{top:calc(100% + 8px);left:-20px;width:max-content;max-width:none}
+.zoom .sqadd{font-size:22px;font-weight:800}
+.sqrow{overflow:hidden}
+</style></head>
+<body>
+<div id="glow"></div>
+<div class="qbrand"><span class="logo" id="logo"><i style="--h:4"></i><i style="--h:46"></i><i style="--h:128"></i><i style="--h:192"></i><i style="--h:296"></i></span>Squad Up</div>
+<div class="q">How Do I Add People to My Squad?</div>
+
+<!-- 1. share your squad link -->
+<div class="zoom" id="inv">
+  <div class="minibar"><span class="brand"><span class="logo" style="--s:14px"><i style="--h:4"></i><i style="--h:46"></i><i style="--h:128"></i><i style="--h:192"></i><i style="--h:296"></i></span>Squad Up</span>
+    <span class="avatar" id="me" style="--h:24">J</span></div>
+  <div id="squadpage">
+  <h1>My Squad</h1>
+  <p class="sub">Your squad sees the plans you create. They aren't told when you add or remove them.</p>
+  <div class="bubble plain sqinvite">
+    <p style="margin:0 0 8px"><b>Invite people to your squad</b> <span class="small muted">You'll be in each other's squads.</span></p>
+    <div class="sharerow"><button class="go sm">Copy link</button><button class="sm" id="share">Share…</button></div>
+  </div>
+  </div>
+</div>
+<div class="chat" id="chat"><span class="bub">Join my squad on Squad Up so we see each other's plans: <u>squadup.extrarandom.com/r/Qm4tZ8wP</u></span></div>
+
+<!-- 2. + on someone you've met -->
+<div class="zoom" id="lists">
+  <h2 style="margin-top:0">My Squad</h2>
+  <div class="bubble plain"><ul class="sqlist">
+    <li class="sqrow"><span class="avatar" style="--h:204">S</span><span class="sqwho"><span class="sqname">Sebastian</span></span><button class="sm quiet sqbtn">Remove</button></li>
+    <li class="sqrow"><span class="avatar" style="--h:291">M</span><span class="sqwho"><span class="sqname">Marcus</span></span><button class="sm quiet sqbtn">Remove</button></li>
+    <li class="sqrow" id="pin"><span class="avatar" style="--h:159">P</span><span class="sqwho"><span class="sqname">Priya</span></span><button class="sm quiet sqbtn">Remove</button></li>
+  </ul></div>
+  <h2>People you've met</h2>
+  <p class="sub">From plans you were in on together. Tap + to add them.</p>
+  <div class="bubble plain"><ul class="sqlist">
+    <li class="sqrow" id="pout"><span class="avatar" style="--h:159">P</span><span class="sqwho"><span class="sqname">Priya</span><span class="small muted sqlast">Beach Day · Nov 28</span></span><button class="sm sqbtn sqadd" id="plus">+</button></li>
+    <li class="sqrow"><span class="avatar" style="--h:110">L</span><span class="sqwho"><span class="sqname">Leo</span><span class="small muted sqlast">Game Night · Nov 20</span></span><button class="sm sqbtn sqadd">+</button></li>
+  </ul></div>
+</div>
+
+<!-- 3. tap a name on a plan -->
+<div class="zoom" id="plan">
+  <h3 style="margin:0 0 10px 4px">Saturday Dinner</h3>
+  <div class="bubble opt plan" style="--h:4;--l:50%">
+    <div class="top"><div><div class="when">Sat Nov 21, 7pm</div><div class="meta"><span class="tag solid">The plan</span></div></div>
+      <span class="count">4 in</span></div>
+    <div class="who">John, <button class="pname">Marcus</button>, <button class="pname">Danielle</button>, <span style="position:relative;display:inline-block"><button class="pname" id="tess">Tess</button>
+      <div class="pmenu" id="menu" style="opacity:0"><b class="pmname">Tess</b><span id="mb"></span></div></span></div>
+    <div class="track"><div class="bar" style="width:80%"></div></div>
+  </div>
+  <div style="height:110px"></div>
+</div>
+
+<div class="pay" id="c1"><b>Send a link to anyone<br>you want to add.</b></div>
+<div class="pay" id="c2"><b>Or add/remove them<br>from your list.</b></div>
+<div class="pay" id="c3"><b>Or tap any name on a plan.</b></div>
+
+<div id="spot"></div><div id="ripple"></div>
+<script src="stage.js"></script>
+<script>
+window.DURATION = 14.6 + END_FADE;
+window.POSTER = 8.4;
+const Z = 1.35;
+function enter(id, t, a, b, z, dy) {
+  const el = $(id);
+  el.style.opacity = b == null ? out(prog(t, a, a + .4)) : shown(t, a, b);
+  el.style.transform = `translateY(${(1 - out(prog(t, a, a + .4))) * 30 + (dy || 0)}px) ${CENTER(z || Z)}`;
+}
+// a list row that grows in, or shrinks away
+function row(id, k) {
+  const el = $(id); el.style.opacity = k;
+  el.style.maxHeight = (58 * k) + "px"; el.style.paddingTop = el.style.paddingBottom = (8 * k) + "px";
+  el.style.borderTopWidth = k > .02 ? "" : "0";
+}
+const ADD = '<button type="button" class="sm go" id="addb">Add to squad?</button>';
+const IN = '<span class="pmin">In your squad ✓ <button type="button" class="pmrm">(Remove?)</button></span>';
+function draw(t) {
+  dots("#logo", t, -1);
+  $("glow").style.setProperty("--gh", 198);
+
+  // 0. tap your circle at the top right to get to My Squad (0.1 - 1.4)
+  enter("inv", t, .1, 5.6, Z, -60);
+  tap(t, 1.0, $("me"));
+  const pk = out(prog(t, 1.25, 1.65));
+  $("squadpage").style.opacity = pk; $("squadpage").style.transform = `translateY(${(1 - pk) * 16}px)`;
+  // everything after waits that extra second
+  t = Math.max(0, t - 1.0);
+
+  // 1. share your squad link (1.1 - 5.6)
+  tap(t, 1.7, $("share"));
+  const ck = shown(t, 2.3, 4.6);
+  $("chat").style.opacity = ck; $("chat").style.transform = `translateY(${(1 - out(prog(t, 2.3, 2.7))) * 30}px)`;
+  caption("c1", t, .45, 4.6);
+
+  // 2. + on someone you've met (4.75 - 9.1)
+  enter("lists", t, 4.75, 9.1, 1.25);
+  tap(t, 6.2, $("plus"));
+  row("pin", ease(prog(t, 6.45, 6.95)));
+  row("pout", 1 - ease(prog(t, 6.35, 6.85)));
+  caption("c2", t, 5.0, 9.1);
+
+  // 3. tap a name on a plan (9.25 - 13.6)
+  enter("plan", t, 9.25, null, 1.45);
+  tap(t, 10.4, $("tess"));
+  const mk = out(prog(t, 10.55, 10.85)), m = $("menu");
+  m.style.opacity = mk; m.style.transform = `translateY(${(1 - mk) * -8}px)`;
+  const added = t >= 11.75;
+  $("mb").innerHTML = added ? IN : ADD;
+  if (!added) tap(t, 11.65, $("addb"));
+  caption("c3", t, 9.5);
+}
+</script>
+</body></html>
