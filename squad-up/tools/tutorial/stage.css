@@ -1,0 +1,39 @@
+/* Shared look for the tutorial videos (720x1280). The app's own theme is
+   injected before this, so cards and buttons are the real ones. */
+*{transition:none!important;animation:none!important;caret-color:transparent!important}
+html,body{width:720px;height:1280px;overflow:hidden;margin:0;padding:0!important}
+body{position:relative;background:repeating-linear-gradient(180deg,#F6F8FA 0 3px,#EEF2F6 3px 6px)!important}
+#glow{position:absolute;left:50%;top:640px;width:1000px;height:1000px;margin:-500px 0 0 -500px;border-radius:50%;
+  background:radial-gradient(circle,hsla(var(--gh,198),85%,62%,.26) 0,hsla(var(--gh,198),85%,62%,0) 62%)}
+/* the question, always at the top */
+.q{position:absolute;left:44px;right:44px;top:122px;text-align:center;font-size:60px;line-height:1.1;font-weight:800;
+  letter-spacing:-.015em;color:#3B4553;text-wrap:balance}
+.qbrand{position:absolute;left:0;right:0;top:72px;display:flex;justify-content:center;align-items:center;gap:12px;
+  font-size:24px;font-weight:800;color:#8792A2;letter-spacing:.01em}
+.qbrand .logo{--s:22px}
+/* the caption, centered in the bottom band; several stack in one place and swap */
+.pay{position:absolute;left:36px;right:36px;top:1000px;text-align:center;opacity:0}
+.pay b{display:block;text-wrap:balance;font-size:48px;line-height:1.22;font-weight:800;color:#3B4553}
+.pay span{display:block;font-size:36px;line-height:1.3;font-weight:500;color:#7A8596;margin-top:10px}
+/* a piece of the app, shown big, centered between the question and the caption
+   (top is its center line; draw with CENTER, below) */
+.zoom{position:absolute;left:50%;top:590px;width:358px;margin-left:-179px;transform-origin:50% 50%;opacity:0}
+.logo i{width:var(--s,18px);height:var(--s,18px);margin-left:calc(var(--s,18px) * -.33);
+  box-shadow:0 1px 2px rgba(0,0,0,.18),0 0 0 calc(var(--s,18px) * .11) #fff}
+.logo i:first-child{margin-left:0}
+/* a phone notification */
+.note{position:absolute;left:50px;right:50px;top:590px;border-radius:28px;padding:20px 22px 20px 20px;
+  background:rgba(250,251,253,.98);box-shadow:0 18px 44px -12px rgba(30,45,70,.5),0 0 0 1px rgba(0,0,0,.04);
+  display:flex;gap:18px;align-items:flex-start;opacity:0}
+.note .ic{flex:none;width:64px;height:64px;border-radius:15px;background:linear-gradient(180deg,#fff,#EEF2F6);
+  box-shadow:inset 0 0 0 1px #E1E7EE;display:flex;align-items:center;justify-content:center}
+.note .meta{display:flex;justify-content:space-between;font-size:19px;color:#8792A2;font-weight:700;letter-spacing:.03em}
+.note .msg{font-size:30px;line-height:1.32;font-weight:500;color:#3B4553;margin-top:4px}
+.note .link{color:#2F7FD0;font-weight:700}
+/* the spotlight: a hole in a dark veil, around whatever is about to be tapped */
+#spot{position:absolute;z-index:20;pointer-events:none;opacity:0;
+  box-shadow:0 0 0 4px rgba(255,255,255,.95),0 0 0 3000px rgba(24,34,48,.38)}
+#ripple{position:absolute;z-index:21;border-radius:50%;pointer-events:none;opacity:0;
+  border:4px solid rgba(255,255,255,.95);box-shadow:0 0 18px rgba(255,255,255,.6)}
+/* the question and caption stay bright above the spotlight veil */
+.q,.qbrand,.pay{z-index:22}

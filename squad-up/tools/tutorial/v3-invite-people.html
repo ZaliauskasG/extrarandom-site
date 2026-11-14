@@ -1,0 +1,117 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@500;700;800&display=block" rel="stylesheet">
+<link rel="stylesheet" href="stage.css">
+<!-- Tutorial video 3: How Do I Invite People?
+     The Invite section: three sorted groups -> tap names, Send invites ->
+     or Copy link for the group chat. -->
+<style>
+.zoom{width:460px;margin-left:-230px}
+.zoom details{margin:0}
+#box{overflow:hidden}
+#box label{margin-top:12px}
+#box label:first-child{margin-top:4px}
+.grp{border-radius:16px;padding:0 4px 4px}
+.fly{position:absolute;z-index:23;opacity:0;width:64px;height:64px;border-radius:18px;background:#fff;
+  box-shadow:0 10px 24px -8px rgba(30,45,70,.45),0 0 0 1px rgba(0,0,0,.04);display:flex;align-items:center;justify-content:center}
+.chat{position:absolute;left:56px;right:56px;top:610px;opacity:0;font-size:27px;line-height:1.3}
+.chat .from{font-size:19px;font-weight:700;color:#8792A2;margin:0 0 6px 18px}
+.chat .bub{display:inline-block;max-width:520px;background:#E9ECF1;color:#1F2733;border-radius:26px 26px 26px 8px;padding:14px 20px}
+.chat .mine{text-align:right;margin-top:10px}
+.chat .mine .bub{background:#2F86F6;color:#fff;border-radius:26px 26px 8px 26px;text-align:left}
+.chat .mine .bub u{display:block;text-decoration:underline;text-decoration-thickness:2px;word-break:break-all;margin-top:4px;font-size:24px}
+</style></head>
+<body>
+<div id="glow"></div>
+<div class="qbrand"><span class="logo" id="logo"><i style="--h:4"></i><i style="--h:46"></i><i style="--h:128"></i><i style="--h:192"></i><i style="--h:296"></i></span>Squad Up</div>
+<div class="q">How Do I Invite People?</div>
+
+<!-- 1 and 2. the Invite section at the bottom of the plan -->
+<div class="zoom" id="inv">
+  <details class="bubble plain fold invfold" open style="--h:262;--l:50%">
+    <summary>Invite</summary>
+    <div class="sharerow"><button class="go sm">Copy link</button><button class="sm">Share…</button>
+      <button class="sm" id="open">+ Invite people on Squad Up</button></div>
+    <div id="box" style="margin-top:10px">
+      <div class="grp" id="g1"><label>Into Board Games</label>
+        <div class="chips"><button class="chip" id="k1">Marcus <span class="via">text</span></button><button class="chip">Leo <span class="via">text</span></button><button class="chip">Jordan <span class="via">email</span></button></div></div>
+      <div class="grp" id="g2"><label>Your Squad</label>
+        <div class="chips"><button class="chip" id="k2">Sebastian <span class="via">text</span></button><button class="chip">Priya <span class="via">email</span></button><button class="chip">Tess <span class="via">text</span></button></div></div>
+      <div class="grp" id="g3"><label>Everyone Else</label>
+        <div class="chips"><button class="chip" id="k3">Sarah <span class="via">text</span></button><button class="chip">Danielle <span class="via">email</span></button></div></div>
+      <div class="row"><button class="go" id="send" disabled>Send invites</button></div>
+    </div>
+  </details>
+</div>
+
+<!-- message icons that fly off when invites are sent -->
+<div class="fly" id="fly1"><svg viewBox="0 0 24 24" width="34" height="34"><path d="M12 3C6.5 3 2 6.6 2 11c0 2.4 1.3 4.5 3.4 6L4.5 21l4.3-2.4c1 .3 2.1.4 3.2.4 5.5 0 10-3.6 10-8s-4.5-8-10-8Z" fill="#34C759"/></svg></div>
+<div class="fly" id="fly2"><svg viewBox="0 0 24 24" width="34" height="34"><rect x="2.5" y="5" width="19" height="14" rx="3" fill="#2F86F6"/><path d="M3.5 7l8.5 6 8.5-6" fill="none" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/></svg></div>
+<div class="fly" id="fly3"><svg viewBox="0 0 24 24" width="34" height="34"><path d="M12 3C6.5 3 2 6.6 2 11c0 2.4 1.3 4.5 3.4 6L4.5 21l4.3-2.4c1 .3 2.1.4 3.2.4 5.5 0 10-3.6 10-8s-4.5-8-10-8Z" fill="#34C759"/></svg></div>
+
+<!-- 3. or copy the link for the group chat -->
+<div class="zoom" id="link" style="top:420px">
+  <details class="bubble plain fold invfold" open style="--h:262;--l:50%">
+    <summary>Invite <span class="sumnote">3 invited</span></summary>
+    <div class="sharerow"><button class="go sm" id="copy">Copy link</button><button class="sm">Share…</button>
+      <button class="sm">+ Invite people on Squad Up</button></div>
+    <div class="ok" id="cmsg" style="opacity:0">Copied. Paste it in a text or group chat.</div>
+  </details>
+</div>
+<div class="chat" id="chat">
+  <div class="from">Game Night Crew</div>
+  <div><span class="bub">who's free Friday?</span></div>
+  <div class="mine"><span class="bub">Game night Friday, my place! <u>squadup.extrarandom.com/r/x7Kp2QaM</u></span></div>
+</div>
+
+<div class="pay" id="c1"><b>Your people, already sorted.</b></div>
+<div class="pay" id="c2"><b>Invites go out automatically.</b></div>
+<div class="pay" id="c3"><b>Or share the link in<br>your group chat.</b></div>
+
+<div id="spot"></div><div id="ripple"></div>
+<script src="stage.js"></script>
+<script>
+window.DURATION = 14.0 + END_FADE;
+window.POSTER = 4.9;
+const Z = 1.3;
+function draw(t) {
+  dots("#logo", t, -1);
+  $("glow").style.setProperty("--gh", 262);
+
+  // the card comes in on real time; everything after waits an extra half second
+  const t0 = t; t = t < .6 ? 0 : t - .5;
+  // 1. open the invite list: three groups, sorted for you (0 - 5.8)
+  const iv = $("inv"), ik = Math.min(out(prog(t0, .1, .45)), 1 - ease(prog(t, 8.65, 9.0)));
+  // the list opens by growing; keep the whole card centered as it grows
+  const box = $("box"), full = box.scrollHeight, g = ease(prog(t, 2.3, 2.9));
+  box.style.height = (full * g) + "px"; box.style.marginTop = (10 * g) + "px"; box.style.opacity = out(prog(t, 2.45, 2.95));
+  iv.style.opacity = ik; iv.style.transform = `translateY(${(1 - out(prog(t0, .1, .5))) * 30}px) ${CENTER(Z)}`;
+  tap(t, 2.0, $("open"));
+  caption("c1", t, 2.9, 5.3);
+
+  // 2. tap names, Send invites (5.4 - 9.0)
+  [["k1", 5.7], ["k2", 6.2], ["k3", 6.7]].forEach(([id, at]) => {
+    $(id).classList.toggle("on", t >= at + .05); tap(t, at, $(id), true); });
+  $("send").disabled = t < 5.75;
+  tap(t, 7.5, $("send"), true);
+  const r = $("send").getBoundingClientRect();
+  [["fly1", 7.6, -150, -260], ["fly2", 7.72, 10, -300], ["fly3", 7.84, 170, -250]].forEach(([id, at, dx, dy]) => {
+    const k = prog(t, at, at + .9), el = $(id);
+    el.style.opacity = k > 0 && k < 1 ? Math.min(1, k * 5) * (1 - prog(k, .65, 1)) : 0;
+    el.style.left = (r.left + r.width / 2 - 32 + dx * out(k)) + "px";
+    el.style.top = (r.top - 10 + dy * out(k)) + "px";
+    el.style.transform = `scale(${.6 + .5 * back(k)})`;
+  });
+  caption("c2", t, 5.5, 9.0);
+
+  // 3. or copy the link into the group chat (9.2 - 13.5)
+  const lk = $("link");
+  lk.style.opacity = out(prog(t, 9.2, 9.6)); lk.style.transform = `translateY(${(1 - out(prog(t, 9.2, 9.6))) * 30}px) ${CENTER(Z)}`;
+  tap(t, 10.2, $("copy"));
+  $("cmsg").style.opacity = out(prog(t, 10.3, 10.6));
+  const ch = $("chat");
+  ch.style.opacity = out(prog(t, 10.9, 11.3)); ch.style.transform = `translateY(${(1 - out(prog(t, 10.9, 11.3))) * 30}px)`;
+  caption("c3", t, 9.45);
+}
+</script>
+</body></html>

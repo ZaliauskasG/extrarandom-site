@@ -1,0 +1,100 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@500;700;800&display=block" rel="stylesheet">
+<link rel="stylesheet" href="stage.css">
+<!-- Tutorial video 7: Who Can See My Plans?
+     Anyone in My Squad or By Invite Only -> it shows on your squad's home pages -> Hide someone's plans. -->
+<style>
+.zoom{width:400px;margin-left:-200px}
+.zoom h2{font-size:22px;margin:0 0 10px 4px}
+.zoom .bubble{margin:0 0 12px}
+#pick label:first-child{margin-top:0}
+.tip{pointer-events:none}
+#plan .title-row h1{font-size:24px}
+#plan .hidehost{margin-top:22px}
+</style></head>
+<body>
+<div id="glow"></div>
+<div class="qbrand"><span class="logo" id="logo"><i style="--h:4"></i><i style="--h:46"></i><i style="--h:128"></i><i style="--h:192"></i><i style="--h:296"></i></span>Squad Up</div>
+<div class="q">Who Can See My Plans?</div>
+
+<!-- 1. you choose, each plan -->
+<div class="zoom" id="pick">
+  <div class="bubble plain" style="--h:262;--l:50%">
+    <label>What</label><input value="Game Night" readonly>
+    <label>Who can see it? <button type="button" class="tip">i</button></label>
+    <div class="seg" role="radiogroup">
+      <button type="button" role="radio" id="sq" aria-checked="true">Anyone in My Squad</button>
+      <button type="button" role="radio" id="io" aria-checked="false">By Invite Only</button>
+    </div>
+  </div>
+</div>
+
+<!-- 2. your squad sees it on their home page -->
+<div class="zoom" id="home">
+  <h2>Upcoming Plans</h2>
+  <div id="newone"><a class="bubble row-card" style="--h:262;--l:50%">
+    <div class="orb"><b>20</b><span>Fri</span></div>
+    <div class="body"><h3>Game Night <span class="at">at John's</span></h3>
+      <div class="meta"><span>Nov 20, 8pm</span><span class="tag">Board Games</span></div></div></a></div>
+  <a class="bubble row-card" style="--h:4;--l:50%">
+    <div class="orb"><b>21</b><span>Sat</span></div>
+    <div class="body"><h3>Saturday Dinner</h3>
+      <div class="meta"><span>Nov 21, 7pm</span><span class="tag">Dinner</span><span class="who"><span class="n">5 in</span></span></div></div></a>
+  <a class="bubble row-card" style="--h:46;--l:50%">
+    <div class="orb"><b>28</b><span>Sat</span></div>
+    <div class="body"><h3>Beach Day <span class="at">at Bowman's</span></h3>
+      <div class="meta"><span>Nov 28, 10am</span><span class="tag">Beach Day</span></div></div></a>
+</div>
+
+<!-- 3. hide someone's plans -->
+<div class="zoom" id="plan">
+  <div class="title-row" style="--h:262;--l:50%"><div class="orb"><b>20</b><span>Fri</span></div>
+    <h1>Game Night <span class="at">at John's</span></h1></div>
+  <div style="--h:262;--l:50%"><div class="meta" style="margin-top:8px"><span class="tag">Board Games</span><span>by John</span>
+    <span class="aud">(Anyone in John's squad)</span></div></div>
+  <div class="row hidehost"><button type="button" class="sm quiet" id="hide">Hide John's plans</button></div>
+</div>
+
+<div class="pay" id="c1"><b>You choose who sees it.</b></div>
+<div class="pay" id="c2"><b>Anyone in My Squad = your whole squad sees it on their home page.</b></div>
+<div class="pay" id="c3"><b>Rather not see someone's plans? Hide them in one tap.</b></div>
+
+<div id="spot"></div><div id="ripple"></div>
+<script src="stage.js"></script>
+<script>
+window.DURATION = 14.0 + END_FADE;
+window.POSTER = 3.9;
+const Z = 1.4;
+function enter(id, t, a, b, z, dy) {
+  const el = $(id);
+  el.style.opacity = b == null ? out(prog(t, a, a + .4)) : shown(t, a, b);
+  el.style.transform = `translateY(${(1 - out(prog(t, a, a + .4))) * 30 + (dy || 0)}px) ${CENTER(z || Z)}`;
+}
+function draw(t) {
+  dots("#logo", t, -1);
+  $("glow").style.setProperty("--gh", 262);
+
+  // 1. you choose (0.1 - 4.6)
+  enter("pick", t, .1, 4.6, 1.5);
+  const inv = t >= 1.85 && t < 3.15;
+  $("io").setAttribute("aria-checked", inv); $("sq").setAttribute("aria-checked", !inv);
+  tap(t, 1.75, $("io"), true); tap(t, 3.05, $("sq"), true);
+  caption("c1", t, .45, 4.6);
+
+  // 2. it shows on your squad's home pages (4.75 - 9.4)
+  enter("home", t, 4.75, 9.4, 1.3);
+  const nk = prog(t, 5.9, 6.4), n = $("newone"), inner = n.firstElementChild;
+  n.style.height = (inner.offsetHeight + 12) * ease(nk) + "px";
+  n.style.opacity = clamp(nk * 1.6);
+  n.style.transform = `scale(${.85 + .15 * back(nk)})`;
+  caption("c2", t, 5.0, 9.4);
+
+  // 3. hide someone's plans (9.55 - 14.0)
+  enter("plan", t, 9.55, null, 1.65);
+  tap(t, 11.2, $("hide"));
+  $("hide").textContent = t >= 11.3 ? "Show John's plans again" : "Hide John's plans";
+  caption("c3", t, 9.8);
+}
+</script>
+</body></html>
